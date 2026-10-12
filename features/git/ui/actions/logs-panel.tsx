@@ -92,8 +92,8 @@ export function LogsPanel({
                 );
                 if (!cancelled) setAiText(text.trim());
                 void import("@/lib/cloud/store")
-                    .then(({ refreshShapeAuth }) => {
-                        void refreshShapeAuth();
+                    .then(({ refreshShapeUsage }) => {
+                        refreshShapeUsage();
                     })
                     .catch(() => undefined);
             } catch (err) {

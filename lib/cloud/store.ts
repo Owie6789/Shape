@@ -12,10 +12,19 @@ import {
   websiteLoginUrl,
   websiteProviderSignInUrl,
 } from "./api";
-import type { ShapeAuthState, ShapeTier } from "./types";
+import type { ShapeAuthState, ShapeTier, UsageCheckResult } from "./types";
 import { clearShapeCatalog, refreshShapeCatalog } from "@/lib/catalog/store";
 import { refreshShapeRuntime } from "@/lib/runtime/store";
 import { identifyTelemetryUser } from "@/lib/telemetry";
+import {
+  USAGE_STALE_MS,
+  UsageRefreshScheduler,
+  isUsageStale,
+  mergeUsageSnapshot,
+  usageSnapshotFromAccount,
+  usageSnapshotFromCheck,
+  type UsageSnapshot,
+} from "./usage";
 
 const STORAGE_KEY = "shape-auth-token";
 const REFRESH_KEY = "shape-auth-refresh-token";
@@ -28,6 +37,8 @@ const LOGIN_POLL_BASE_MS = 1000;
 const LOGIN_POLL_MAX_MS = 8000;
 /** How often the IDE refreshes /api/account while signed in. Keep high to reduce Vercel Fluid CPU. */
 const REVALIDATE_INTERVAL_MS = 30 * 60 * 1000;
+/** Carries fresh usage numbers between Shape windows so no surface stays behind. */
+const USAGE_EVENT = "shape-usage-changed";
 
 type PendingOAuth = {
   state: string;
@@ -62,6 +73,7 @@ const DEFAULT_STATE: ShapeAuthState = {
   creditsIncluded: 0,
   freeAutoPercent: null,
   currentPeriodEnd: null,
+  usageUpdatedAt: null,
   accessToken: null,
 };
 
@@ -80,6 +92,12 @@ let loginPollGeneration = 0;
 let loginWaiter: ((success: boolean) => void) | null = null;
 let revalidateTimer: ReturnType<typeof setInterval> | null = null;
 let refreshInFlight: Promise<string | null> | null = null;
+/**
+ * Serialised account refreshes. Usage-changing events fire as often as they
+ * like; the scheduler collapses a burst into one request and never lets two
+ * responses race.
+ */
+const usageScheduler = new UsageRefreshScheduler({ load: () => loadAccountUsage() });
 
 function settleLoginWaiter(success: boolean) {
   if (!loginWaiter) return;
@@ -226,6 +244,57 @@ function saveCachedProfile(profile: CachedProfile | null) {
   }
 }
 
+/** Fold a partial usage patch into the stored profile without a full rewrite. */
+function patchCachedProfile(patch: Partial<CachedProfile>) {
+  const existing = loadCachedProfile();
+  if (!existing) return;
+  saveCachedProfile({ ...existing, ...patch, cachedAt: Date.now() });
+}
+
+/**
+ * Apply fresh usage numbers as soon as any caller has them.
+ *
+ * This is what makes the sidebar, the composer ring and Settings move in the
+ * same tick instead of waiting for the next account poll. Returns `true` when
+ * something actually changed — an unchanged snapshot never emits, so idle polls
+ * do not re-render every usage surface.
+ */
+export function applyUsageSnapshot(
+  snapshot: UsageSnapshot,
+  opts: { broadcast?: boolean } = {},
+): boolean {
+  const { broadcast = true } = opts;
+  if (!state.loggedIn) return false;
+
+  const patch = mergeUsageSnapshot(state, snapshot);
+  if (!patch) return false;
+
+  setState({ ...patch, usageUpdatedAt: Date.now() });
+  patchCachedProfile(patch);
+  if (broadcast) broadcastUsageChange(snapshot);
+  return true;
+}
+
+/** Numbers from a `/api/usage/check` call — already paid for, so never dropped. */
+export function applyUsageCheckResult(check: UsageCheckResult): void {
+  applyUsageSnapshot(usageSnapshotFromCheck(state, check));
+}
+
+function broadcastUsageChange(snapshot: UsageSnapshot) {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(USAGE_EVENT, { detail: snapshot }));
+  void import("@tauri-apps/api/event")
+    .then(({ emit }) => emit(USAGE_EVENT, snapshot))
+    .catch(() => {
+      /* not in tauri */
+    });
+}
+
+/** A snapshot that came from another window must not be re-broadcast. */
+function applyPeerUsageSnapshot(snapshot: UsageSnapshot) {
+  applyUsageSnapshot({ ...snapshot, source: "peer-window" }, { broadcast: false });
+}
+
 function applyCachedProfile(token: string, profile: CachedProfile) {
   setState({
     loggedIn: true,
@@ -243,6 +312,7 @@ function applyCachedProfile(token: string, profile: CachedProfile) {
     creditsIncluded: profile.creditsIncluded ?? 0,
     freeAutoPercent: profile.freeAutoPercent,
     currentPeriodEnd: profile.currentPeriodEnd ?? null,
+    usageUpdatedAt: profile.cachedAt ?? null,
     accessToken: token,
   });
 }
@@ -326,8 +396,19 @@ function setupAuthSync() {
     });
   });
 
+  window.addEventListener(USAGE_EVENT, (e) => {
+    const detail = (e as CustomEvent<UsageSnapshot>).detail;
+    if (detail) applyPeerUsageSnapshot(detail);
+  });
+
   window.addEventListener("focus", () => {
-    void refreshShapeAuth();
+    revalidateIfStale();
+  });
+
+  // WebView focus does not always fire on tab / window switches, so watch
+  // visibility too — same staleness guard, so the two together stay cheap.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") revalidateIfStale();
   });
 
   window.addEventListener("online", () => {
@@ -336,22 +417,40 @@ function setupAuthSync() {
 
   if (revalidateTimer === null) {
     revalidateTimer = setInterval(() => {
-      if (state.accessToken) void refreshShapeAuth();
+      if (state.accessToken) refreshShapeUsage();
     }, REVALIDATE_INTERVAL_MS);
   }
 
   void import("@tauri-apps/api/event")
     .then(({ listen }) =>
-      listen("shape-auth-changed", () => {
-        void loadToken().then(async (token) => {
-          if (token === state.accessToken) return;
-          await applyToken(token);
-        });
-      }),
+      Promise.all([
+        listen("shape-auth-changed", () => {
+          void loadToken().then(async (token) => {
+            if (token === state.accessToken) return;
+            await applyToken(token);
+          });
+        }),
+        listen<UsageSnapshot>(USAGE_EVENT, (event) => {
+          if (event.payload) applyPeerUsageSnapshot(event.payload);
+        }),
+      ]),
     )
     .catch(() => {
       /* not in tauri */
     });
+}
+
+/**
+ * Refresh on focus / visibility only when the snapshot has aged out.
+ *
+ * Usage-changing actions already refresh immediately and broadcast to every
+ * window, so a recently confirmed snapshot is genuinely current and refetching
+ * it would just burn a request.
+ */
+function revalidateIfStale() {
+  if (!state.accessToken) return;
+  if (!isUsageStale(state.usageUpdatedAt, Date.now(), USAGE_STALE_MS)) return;
+  refreshShapeUsage();
 }
 
 async function applyToken(token: string | null, allowRefresh = true) {
@@ -408,8 +507,12 @@ async function applyToken(token: string | null, allowRefresh = true) {
       creditsIncluded: account.creditsIncluded,
       freeAutoPercent: account.freeAutoPercent,
       currentPeriodEnd: account.currentPeriodEnd ?? null,
+      usageUpdatedAt: Date.now(),
       accessToken: token,
     });
+    // Other Shape windows hold their own copy of this store — hand them the
+    // numbers we just paid for instead of leaving them on the cached profile.
+    broadcastUsageChange(usageSnapshotFromAccount(account));
     void identifyTelemetryUser(account.id, { tier: account.tier });
     void Promise.all([import("@/lib/settings"), import("@/lib/telemetry")]).then(
       ([{ getSettings }, { applyTelemetryPreference }]) => {
@@ -613,7 +716,8 @@ export async function initShapeAuth() {
   }
   void refreshShapeCatalog(token).catch(() => undefined);
   void refreshShapeRuntime().catch(() => undefined);
-  await applyToken(token);
+  // Through the scheduler so a focus event firing mid-boot cannot overlap it.
+  await usageScheduler.flush();
 
   // Resume PKCE after rebuild/reload while the browser login is still in flight.
   // Must run after applyToken(null), which resets isLoggingIn via DEFAULT_STATE.
@@ -738,9 +842,23 @@ export function getShapeAuthState(): ShapeAuthState {
   return state;
 }
 
-export async function refreshShapeAuth() {
+/** The one place that re-reads /api/account for usage; everything routes here. */
+async function loadAccountUsage() {
   const token = state.accessToken ?? (await loadToken());
   await applyToken(token);
+}
+
+/**
+ * Queue a usage refresh. Safe to call after every usage-changing action: the
+ * scheduler collapses bursts and serialises the requests.
+ */
+export function refreshShapeUsage(): void {
+  usageScheduler.schedule();
+}
+
+/** Refresh now (Settings → Refresh, regaining connectivity). Still serialised. */
+export async function refreshShapeAuth() {
+  await usageScheduler.flush();
 }
 
 /** Call when an API response indicates the session is no longer valid. */

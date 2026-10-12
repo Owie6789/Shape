@@ -526,8 +526,8 @@ export function GitHubDetailPane({
             );
             setWalkthrough(text.trim());
             void import("@/lib/cloud/store")
-                .then(({ refreshShapeAuth }) => {
-                    void refreshShapeAuth();
+                .then(({ refreshShapeUsage }) => {
+                    refreshShapeUsage();
                 })
                 .catch(() => undefined);
         } catch (err) {
@@ -555,8 +555,8 @@ export function GitHubDetailPane({
             setFindingsMd(text.trim());
             setTab("overview");
             void import("@/lib/cloud/store")
-                .then(({ refreshShapeAuth }) => {
-                    void refreshShapeAuth();
+                .then(({ refreshShapeUsage }) => {
+                    refreshShapeUsage();
                 })
                 .catch(() => undefined);
         } catch (err) {

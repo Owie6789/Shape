@@ -150,11 +150,20 @@ export async function checkUsage(token: string, model: string) {
     token,
     body: JSON.stringify({ model }),
     signal: controller.signal,
-  }).finally(() => {
-    if (usageCheckControllers.get(cacheKey) === controller) {
-      usageCheckControllers.delete(cacheKey);
-    }
-  });
+  })
+    .then((result) => {
+      // The check just measured the account — feed those numbers straight to the
+      // usage surfaces instead of waiting for the next account poll.
+      void import("./store")
+        .then(({ applyUsageCheckResult }) => applyUsageCheckResult(result))
+        .catch(() => undefined);
+      return result;
+    })
+    .finally(() => {
+      if (usageCheckControllers.get(cacheKey) === controller) {
+        usageCheckControllers.delete(cacheKey);
+      }
+    });
 
   usageCheckCache.set(cacheKey, { expiresAt: now + USAGE_CHECK_TTL_MS, promise });
   return promise;

@@ -102,8 +102,8 @@ export function CreatePullRequestDialog({
                 await streamTextInto(next.body, setBody, { msPerChar: 4 });
             }
             void import("@/lib/cloud/store")
-                .then(({ refreshShapeAuth }) => {
-                    void refreshShapeAuth();
+                .then(({ refreshShapeUsage }) => {
+                    refreshShapeUsage();
                 })
                 .catch(() => undefined);
         } catch (err) {

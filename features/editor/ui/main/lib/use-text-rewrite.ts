@@ -3,7 +3,7 @@
 import { useCallback, useState } from "react";
 import { commands } from "@/lib/backend/commands";
 import { checkUsage } from "@/lib/cloud/api";
-import { getShapeAccessToken, refreshShapeAuth, useShapeAuth } from "@/lib/cloud/store";
+import { getShapeAccessToken, refreshShapeUsage, useShapeAuth } from "@/lib/cloud/store";
 import { notificationStore } from "@/features/notifications";
 import { captureTelemetry, captureTelemetryError } from "@/lib/telemetry";
 import { messageLengthBucket } from "@/lib/telemetry/sanitize";
@@ -64,7 +64,9 @@ export function useTextRewrite(model = "auto") {
             });
             const response = await commands.rewriteText(token, prompt);
 
-            await refreshShapeAuth();
+            // The usage check above and this rewrite both moved the balance;
+            // one coalesced refresh covers the burst.
+            refreshShapeUsage();
             void captureTelemetry("ai_rewrite_complete", { action, model });
             return stripAssistantResponse(response);
         } catch (err) {

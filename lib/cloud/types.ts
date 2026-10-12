@@ -17,6 +17,8 @@ export type ShapeAuthState = {
   creditsIncluded: number;
   freeAutoPercent: number | null;
   currentPeriodEnd?: string | null;
+  /** When the usage numbers above were last confirmed by the server. */
+  usageUpdatedAt?: number | null;
   accessToken: string | null;
 };
 

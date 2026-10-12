@@ -450,8 +450,8 @@ export function ChatStreamProvider({ children }: { children: React.ReactNode }) 
                 if (isForeignConversation(conversationId)) return;
                 if (turnId) finishedTurns.add(turnId);
                 if (!error && stats) {
-                    void import("@/lib/cloud/store").then(({ refreshShapeAuth }) => {
-                        void refreshShapeAuth();
+                    void import("@/lib/cloud/store").then(({ refreshShapeUsage }) => {
+                        refreshShapeUsage();
                     });
                     void import("@/lib/chat/last-turn-usage").then(({ setLastTurnUsage }) => {
                         setLastTurnUsage({

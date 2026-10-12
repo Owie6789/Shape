@@ -688,8 +688,8 @@ export default function Source({
                 await streamTextInto(description, setCommitDescription, { msPerChar: 4 });
             }
             void import("@/lib/cloud/store")
-                .then(({ refreshShapeAuth }) => {
-                    void refreshShapeAuth();
+                .then(({ refreshShapeUsage }) => {
+                    refreshShapeUsage();
                 })
                 .catch(() => undefined);
         } catch (err) {
@@ -714,8 +714,8 @@ export default function Source({
             });
             setConflictHelp(text.trim());
             void import("@/lib/cloud/store")
-                .then(({ refreshShapeAuth }) => {
-                    void refreshShapeAuth();
+                .then(({ refreshShapeUsage }) => {
+                    refreshShapeUsage();
                 })
                 .catch(() => undefined);
         } catch (err) {
