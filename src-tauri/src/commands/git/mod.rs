@@ -8,7 +8,7 @@ use std::process::Command;
 use std::str;
 
 mod hunks;
-pub use hunks::{GitHunkList, git_list_hunks, git_restore_hunk, git_stage_hunk, git_unstage_hunk};
+pub use hunks::{git_list_hunks, git_restore_hunk, git_stage_hunk, git_unstage_hunk, GitHunkList};
 
 pub(super) fn git_cmd() -> Result<Command, AppError> {
     crate::core::git_bin::git_command()

@@ -5,12 +5,12 @@
 #![allow(dead_code, unused_imports)]
 
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use futures::{SinkExt, StreamExt};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tauri::Emitter;
 use tokio::time::timeout;
 use tokio_tungstenite::tungstenite::Message;

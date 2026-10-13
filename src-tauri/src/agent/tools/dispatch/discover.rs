@@ -1,6 +1,6 @@
 //! Search and web discovery tools.
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tauri::Emitter;
 
 use crate::agent::commands::{logging, streaming};
@@ -8,8 +8,8 @@ use crate::agent::models::{AutoRunMode, PendingCommand};
 use crate::agent::tools::search;
 
 use super::common::{
-    ApprovalDecision, cleanup_pending_command, clip, emit_command_resolved, error_outcome,
-    escape_xml_attr, escape_xml_text, get_str, latest_user_task, wait_for_command_decision,
+    cleanup_pending_command, clip, emit_command_resolved, error_outcome, escape_xml_attr,
+    escape_xml_text, get_str, latest_user_task, wait_for_command_decision, ApprovalDecision,
 };
 use super::{ToolCtx, ToolOutcome};
 

@@ -11,7 +11,7 @@ use crate::agent::model_router::{self};
 use crate::core::error::AppError;
 use regex::Regex;
 use reqwest::Client;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::{Mutex, OnceLock};

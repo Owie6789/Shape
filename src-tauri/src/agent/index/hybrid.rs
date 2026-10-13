@@ -2,7 +2,7 @@
 
 use super::bm25::{Bm25Index, SearchHit};
 use super::embeddings::{Embedder, EmbeddingStore, RemoteSearchHit};
-use crate::agent::search::rg::{RgHit, rg_search};
+use crate::agent::search::rg::{rg_search, RgHit};
 use std::collections::HashMap;
 
 pub const RRF_K: f64 = 60.0;

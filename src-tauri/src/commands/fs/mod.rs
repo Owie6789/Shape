@@ -1,7 +1,7 @@
 use crate::app_state::{AppState, FileInfo, ProjectState};
 use crate::core::error::AppError;
 use fsindex::{Config, FileIndexer};
-use fst::{IntoStreamer, Set, Streamer, automaton::Automaton, automaton::Str};
+use fst::{automaton::Automaton, automaton::Str, IntoStreamer, Set, Streamer};
 use notify::{Event, RecursiveMode, Watcher};
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config as MatcherConfig, Matcher};
@@ -1852,10 +1852,9 @@ mod tests {
         assert!(rel.iter().any(|n| n.is_empty() || *n == "."));
         assert!(rel.iter().any(|n| n == "src"));
         assert!(rel.iter().any(|n| n == "app"));
-        assert!(
-            rel.iter()
-                .all(|n| *n != "node_modules" && !n.contains("node_modules"))
-        );
+        assert!(rel
+            .iter()
+            .all(|n| *n != "node_modules" && !n.contains("node_modules")));
         assert!(rel.iter().all(|n| *n != ".next" && *n != "out"));
         assert!(
             roots.len() <= 8,

@@ -1,6 +1,6 @@
 use crate::mcp::oauth::{ensure_fresh_token, get_token, refresh_access_token};
 use crate::mcp::types::{CallToolResult, McpAuthType, McpToolInfo, ToolContent};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static REQUEST_ID: AtomicU64 = AtomicU64::new(1);

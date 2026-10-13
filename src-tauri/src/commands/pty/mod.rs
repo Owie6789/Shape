@@ -1,5 +1,5 @@
 use crate::core::error::AppError;
-use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
+use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};

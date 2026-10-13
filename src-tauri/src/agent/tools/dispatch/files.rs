@@ -1,6 +1,6 @@
 //! File read/write/edit tools (edit_file, apply_patch, create, delete, rename).
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tauri::{Emitter, Manager};
 
 use crate::agent::commands::{checkpoints, logging, streaming};
@@ -9,8 +9,8 @@ use crate::agent::security;
 use crate::agent::tools::files;
 
 use super::common::{
-    ApprovalDecision, blocked_outcome, error_outcome, escape_xml_attr, escape_xml_text, get_str,
-    is_read_only_mode,
+    blocked_outcome, error_outcome, escape_xml_attr, escape_xml_text, get_str, is_read_only_mode,
+    ApprovalDecision,
 };
 use super::{SideEffect, ToolCtx, ToolOutcome};
 

@@ -1,6 +1,6 @@
 //! Shared helpers for tool dispatch.
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tauri::Emitter;
 
 use super::{ToolCtx, ToolOutcome};

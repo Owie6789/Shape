@@ -1,7 +1,7 @@
 //! Plan, todos, finish, design, and MCP tools.
 
 use base64::Engine;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tauri::Emitter;
 
 use crate::agent::commands::streaming;
@@ -951,10 +951,10 @@ mod tests {
         );
         assert!(validate_plan_todos_section("## Todo\n\n- [x] Done already\n").is_ok());
         // Checkbox under a later section does not count.
-        assert!(
-            validate_plan_todos_section("## Todos\n\nNotes only.\n\n## Steps\n\n- [ ] Ignored\n")
-                .is_err()
-        );
+        assert!(validate_plan_todos_section(
+            "## Todos\n\nNotes only.\n\n## Steps\n\n- [ ] Ignored\n"
+        )
+        .is_err());
     }
 
     #[test]

@@ -1,5 +1,5 @@
 use crate::mcp::types::{CallToolResult, McpToolInfo, ToolContent};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 #[cfg(windows)]

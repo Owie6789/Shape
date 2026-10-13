@@ -1,6 +1,6 @@
 //! Terminal session tools and command approval.
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tauri::Emitter;
 
 use crate::agent::commands::{logging, streaming, terminal};
@@ -10,8 +10,8 @@ use crate::agent::tools::files;
 use crate::commands::pty::SessionKind;
 
 use super::common::{
-    ApprovalDecision, blocked_outcome, cleanup_pending_command, clip, emit_command_resolved,
-    error_outcome, escape_xml_text, get_str, is_read_only_mode, wait_for_command_decision,
+    blocked_outcome, cleanup_pending_command, clip, emit_command_resolved, error_outcome,
+    escape_xml_text, get_str, is_read_only_mode, wait_for_command_decision, ApprovalDecision,
 };
 use super::discover::tool_grep;
 use super::files::{cat_ui_chunk, tool_list_dir, tool_read_file};

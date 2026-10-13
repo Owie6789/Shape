@@ -4,7 +4,7 @@
 use futures::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::time::Instant;
 use tauri::Emitter;
 use tauri::Manager;
@@ -909,7 +909,11 @@ pub async fn stream_chat(
 }
 
 fn nonempty_string(s: String) -> Option<String> {
-    if s.is_empty() { None } else { Some(s) }
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
 }
 
 fn nonempty_details(details: &[Value]) -> Option<Value> {

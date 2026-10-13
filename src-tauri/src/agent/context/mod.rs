@@ -4,7 +4,7 @@ mod repo_map;
 pub use breakdown::build_context_breakdown;
 pub use repo_map::DEFAULT_REPO_MAP_TOKENS;
 
-use crate::agent::context::repo_map::{RepoMapInput, build_repo_map, format_repo_map_section};
+use crate::agent::context::repo_map::{build_repo_map, format_repo_map_section, RepoMapInput};
 use crate::agent::index::IndexState;
 use crate::app_state::AppState;
 use crate::core::error::AppError;

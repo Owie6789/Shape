@@ -3,7 +3,7 @@ use super::logging;
 /// Message building: converts internal ChatMessage history into the JSON
 /// format expected by OpenRouter, with image support.
 use regex::Regex;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 /// Converts our internal ChatMessage history into the JSON format expected by OpenRouter.
 /// Detects <attached_image> tags in user messages and constructs multipart content for vision models.
@@ -616,11 +616,9 @@ mod tests {
         let content = out[1].get("content").unwrap();
         assert!(content.is_array());
         let parts = content.as_array().unwrap();
-        assert!(
-            parts
-                .iter()
-                .any(|p| p.get("type").and_then(|t| t.as_str()) == Some("image_url"))
-        );
+        assert!(parts
+            .iter()
+            .any(|p| p.get("type").and_then(|t| t.as_str()) == Some("image_url")));
         assert!(parts.iter().any(|p| {
             p.pointer("/image_url/url")
                 .and_then(|u| u.as_str())

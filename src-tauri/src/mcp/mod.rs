@@ -10,7 +10,7 @@ pub use types::*;
 use client::McpClient as StdioClient;
 use http_client::HttpMcpClient;
 use oauth::get_token;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 

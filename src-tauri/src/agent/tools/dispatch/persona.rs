@@ -5,11 +5,11 @@
 use std::time::Duration;
 
 use futures::future::join_all;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tauri::Emitter;
 
 use crate::agent::commands::streaming::{self, ProxyContext};
-use crate::agent::tools::browse::{SNAPSHOT_JS, is_same_document_nav, scroll_past_in_page_anchor};
+use crate::agent::tools::browse::{is_same_document_nav, scroll_past_in_page_anchor, SNAPSHOT_JS};
 use crate::browser::{self, cdp};
 
 use super::common::{clip, error_outcome, escape_xml_attr, get_str};

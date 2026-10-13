@@ -1,6 +1,6 @@
 //! Typed decisions and a done-check for the agent.
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use super::common::{error_outcome, get_str};
 use super::{ToolCtx, ToolOutcome};

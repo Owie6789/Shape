@@ -1656,11 +1656,9 @@ export function App(){return <main><Header cartCount={1} label="Shop" /><div cla
         })
         .unwrap_err();
         assert!(format!("{err:?}").contains("cartCount"), "{err:?}");
-        assert!(
-            !std::fs::read_to_string(src.join("App.tsx"))
-                .unwrap()
-                .contains("cartCount={9}")
-        );
+        assert!(!std::fs::read_to_string(src.join("App.tsx"))
+            .unwrap()
+            .contains("cartCount={9}"));
 
         let header = resolve_design_element(
             root.to_string_lossy().into_owned(),
@@ -1690,11 +1688,9 @@ export function App(){return <main><Header cartCount={1} label="Shop" /><div cla
             content: None,
         })
         .unwrap();
-        assert!(
-            std::fs::read_to_string(src.join("App.tsx"))
-                .unwrap()
-                .contains(r#"<Header cartCount={1} label="Cart""#)
-        );
+        assert!(std::fs::read_to_string(src.join("App.tsx"))
+            .unwrap()
+            .contains(r#"<Header cartCount={1} label="Cart""#));
 
         let pkg = resolve_design_element(
             root.to_string_lossy().into_owned(),

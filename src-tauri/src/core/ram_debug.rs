@@ -5,11 +5,11 @@
 
 use serde_json::Value;
 use std::collections::HashMap;
-use std::fs::{File, OpenOptions, create_dir_all};
+use std::fs::{create_dir_all, File, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::Instant;
 
 static STARTED: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
@@ -312,14 +312,12 @@ pub fn init() {
     );
     std::thread::Builder::new()
         .name("shape-ram-sampler".into())
-        .spawn(|| {
-            loop {
-                std::thread::sleep(std::time::Duration::from_secs(IDLE_SAMPLE_SECS));
-                snapshot(
-                    "idle",
-                    &format!("{} {}", win::resources_line(), win::children_line()),
-                );
-            }
+        .spawn(|| loop {
+            std::thread::sleep(std::time::Duration::from_secs(IDLE_SAMPLE_SECS));
+            snapshot(
+                "idle",
+                &format!("{} {}", win::resources_line(), win::children_line()),
+            );
         })
         .ok();
 }

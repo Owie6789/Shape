@@ -2,8 +2,8 @@ use uuid::Uuid;
 
 #[cfg(target_os = "windows")]
 fn read_or_create_device_id() -> Result<String, String> {
-    use winreg::RegKey;
     use winreg::enums::*;
+    use winreg::RegKey;
 
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let (key, _) = hkcu

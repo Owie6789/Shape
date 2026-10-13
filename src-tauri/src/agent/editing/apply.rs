@@ -4,7 +4,7 @@
 /// trusting the output (no ellipsis markers leaked through, file didn't collapse to
 /// nothing, the model didn't drop a huge chunk silently).
 use reqwest::Client;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use super::super::commands::logging;
 use crate::core::error::AppError;

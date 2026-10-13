@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 fn strip_urls(text: &str) -> String {
     let mut out = String::new();

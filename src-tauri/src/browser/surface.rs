@@ -463,8 +463,8 @@ fn hook_main(app: &AppHandle) {
         track: bool,
     ) {
         use webview2_com::Microsoft::Web::WebView2::Win32::{
-            COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED, ICoreWebView2Frame2,
-            ICoreWebView2NavigationStartingEventArgs2,
+            ICoreWebView2Frame2, ICoreWebView2NavigationStartingEventArgs2,
+            COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED,
         };
         use webview2_com::{
             FrameNavigationCompletedEventHandler, FrameNavigationStartingEventHandler,

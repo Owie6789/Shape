@@ -214,7 +214,11 @@ fn unique_anchor_match(out_lines: &[&str], search: &[&str]) -> Option<usize> {
             hits.push(i);
         }
     }
-    if hits.len() == 1 { Some(hits[0]) } else { None }
+    if hits.len() == 1 {
+        Some(hits[0])
+    } else {
+        None
+    }
 }
 
 fn splice_lines(

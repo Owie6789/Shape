@@ -99,15 +99,48 @@ jobs:
         run: |
           set -euo pipefail
           # Try to check if dependency graph is enabled by querying SBOM endpoint
-          # If graph is disabled, this will 404
-          if gh api repos/${{ github.repository }}/dependency-graph/sbom --jq '.' >/dev/null 2>&1; then
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-            echo "✓ Dependency graph is enabled"
-          else
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Dependency graph appears disabled - dependency review will be skipped"
-            echo "Enable in: Settings > Code security and analysis > Dependency graph"
-          fi
+          # Handle throttling/retries - don't treat throttling as disabled (fail closed for security)
+          MAX_RETRIES=3
+          RETRY_DELAY=5
+          HTTP_CODE=0
+          for i in $(seq 1 $MAX_RETRIES); do
+            echo "Checking dependency graph status (attempt $i/$MAX_RETRIES)..."
+            # Use --include to get HTTP code, capture it
+            RESPONSE=$(gh api repos/${{ github.repository }}/dependency-graph/sbom --include 2>&1 || true)
+            # Check if response contains 404 (graph disabled) vs 429/5xx (throttled) vs success
+            if echo "$RESPONSE" | grep -q "200 OK\|HTTP/2 200"; then
+              echo "enabled=true" >> "$GITHUB_OUTPUT"
+              echo "status=enabled" >> "$GITHUB_OUTPUT"
+              echo "✓ Dependency graph is enabled"
+              exit 0
+            elif echo "$RESPONSE" | grep -q "404 Not Found"; then
+              echo "enabled=false" >> "$GITHUB_OUTPUT"
+              echo "status=disabled" >> "$GITHUB_OUTPUT"
+              echo "::warning::Dependency graph appears disabled (404) - dependency review will be skipped"
+              echo "Enable in: Settings > Code security and analysis > Dependency graph"
+              exit 0
+            elif echo "$RESPONSE" | grep -q "429\|Too Many Requests\|rate limit\|throttled"; then
+              echo "::warning::Dependency graph check throttled (attempt $i), retrying in ${RETRY_DELAY}s..."
+              sleep $RETRY_DELAY
+              RETRY_DELAY=$((RETRY_DELAY * 2))
+              continue
+            else
+              # Other error (network, 5xx, etc) - retry unless last attempt
+              echo "::warning::Dependency graph check failed (attempt $i): $(echo "$RESPONSE" | head -n 5)"
+              if [ $i -lt $MAX_RETRIES ]; then
+                sleep $RETRY_DELAY
+                RETRY_DELAY=$((RETRY_DELAY * 2))
+                continue
+              else
+                # Final attempt failed - fail closed for security, don't treat as disabled
+                echo "enabled=unknown" >> "$GITHUB_OUTPUT"
+                echo "status=error" >> "$GITHUB_OUTPUT"
+                echo "::error::Dependency graph check failed after $MAX_RETRIES attempts - failing closed for security"
+                echo "This could be throttling or temporary failure - please retry the workflow"
+                exit 1
+              fi
+            fi
+          done
 
       - name: Dependency Review
         id: dep-review
@@ -123,9 +156,15 @@ jobs:
         run: |
           set -euo pipefail
           GRAPH_ENABLED="${{ steps.dep-graph-check.outputs.enabled }}"
+          GRAPH_STATUS="${{ steps.dep-graph-check.outputs.status }}"
           OUTCOME="${{ steps.dep-review.outcome }}"
-          echo "Dependency graph enabled: $GRAPH_ENABLED"
+          echo "Dependency graph enabled: $GRAPH_ENABLED, status: $GRAPH_STATUS"
           echo "Dependency review outcome: $OUTCOME"
+          if [ "$GRAPH_STATUS" = "error" ] || [ "$GRAPH_ENABLED" = "unknown" ]; then
+            echo "::error::Dependency graph check failed (throttled or error) - failing closed for security"
+            echo "Please retry the workflow - this is not treated as disabled"
+            exit 1
+          fi
           if [ "$GRAPH_ENABLED" = "false" ]; then
             echo "::warning::Dependency graph disabled - skipping review. Enable for security."
             echo "This is not blocking, but repo should enable dependency graph"

@@ -198,7 +198,11 @@ fn parse_model_title(raw: &str) -> Option<String> {
         || lower.starts_with("could you")
         || lower.contains("data:image")
         || lower.contains("base64");
-    if looks_invalid { None } else { Some(title) }
+    if looks_invalid {
+        None
+    } else {
+        Some(title)
+    }
 }
 
 /// Apply a model title onto the conversation that started this turn.

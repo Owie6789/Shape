@@ -9,13 +9,13 @@ pub mod webview_debug;
 
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tauri::Emitter;
 use tokio::time::timeout;
 use tokio_tungstenite::tungstenite::Message;

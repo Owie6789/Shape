@@ -35,8 +35,8 @@ fn set_process_aumid() {
 }
 
 fn register_aumid_display_name() {
-    use winreg::RegKey;
     use winreg::enums::*;
+    use winreg::RegKey;
 
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let path = format!(r"Software\Classes\AppUserModelId\{}", APP_ID);

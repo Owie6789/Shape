@@ -124,7 +124,11 @@ fn probe_version(path: &Path) -> Option<String> {
         return None;
     }
     let v = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if v.is_empty() { None } else { Some(v) }
+    if v.is_empty() {
+        None
+    } else {
+        Some(v)
+    }
 }
 
 #[cfg(windows)]
@@ -140,7 +144,11 @@ fn where_cmd(command: &str) -> Option<Vec<PathBuf>> {
         .filter(|l| !l.is_empty())
         .map(PathBuf::from)
         .collect();
-    if paths.is_empty() { None } else { Some(paths) }
+    if paths.is_empty() {
+        None
+    } else {
+        Some(paths)
+    }
 }
 
 #[cfg(not(windows))]
@@ -156,5 +164,9 @@ fn which_cmd(command: &str) -> Option<Vec<PathBuf>> {
         .filter(|l| !l.is_empty())
         .map(PathBuf::from)
         .collect();
-    if paths.is_empty() { None } else { Some(paths) }
+    if paths.is_empty() {
+        None
+    } else {
+        Some(paths)
+    }
 }

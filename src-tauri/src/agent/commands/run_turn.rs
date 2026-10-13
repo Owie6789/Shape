@@ -1,5 +1,5 @@
 use reqwest::Client;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use tauri::Emitter;
 
@@ -65,7 +65,8 @@ const MAX_CONSECUTIVE_EDIT_FAILURES: usize = 3;
 const SYNTHESIS_MIN_PROSE_CHARS: usize = 10;
 const SYNTHESIS_MAX_TOKENS: u32 = 900;
 
-const NUDGE_CONCISE_USER_REPLY: &str = "Stop calling tools. Give the user a short, concrete answer. \
+const NUDGE_CONCISE_USER_REPLY: &str =
+    "Stop calling tools. Give the user a short, concrete answer. \
 Plain prose; bullets only if listing distinct items. No section headers, no soft closes.";
 
 const NUDGE_CONTINUE_OR_FINISH: &str = "Continue the task. If you still need to read or edit files, \
@@ -213,7 +214,11 @@ fn duplicate_call_message(name: &str) -> String {
 fn read_file_path_arg(arguments: &str) -> Option<String> {
     let args: Value = serde_json::from_str(arguments).ok()?;
     let path = args.get("path")?.as_str()?.trim().to_string();
-    if path.is_empty() { None } else { Some(path) }
+    if path.is_empty() {
+        None
+    } else {
+        Some(path)
+    }
 }
 
 fn is_access_denied_result(result: &str) -> bool {
@@ -331,7 +336,8 @@ fn tool_result_looks_failed(result: &str) -> bool {
         || lower.contains("enoent")
 }
 
-const PROMPT_SYNTHESIS_USER: &str = "Write a short answer for the user from the tool results below. \
+const PROMPT_SYNTHESIS_USER: &str =
+    "Write a short answer for the user from the tool results below. \
 Plain prose; bullets only if listing distinct items. No `##` headers or report formatting.";
 
 fn strip_tool_markup(content: &str) -> String {

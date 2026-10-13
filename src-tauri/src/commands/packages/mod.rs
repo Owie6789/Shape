@@ -269,11 +269,19 @@ pub fn npm_update(
 }
 
 fn npm_exe() -> &'static str {
-    if cfg!(windows) { "npm.cmd" } else { "npm" }
+    if cfg!(windows) {
+        "npm.cmd"
+    } else {
+        "npm"
+    }
 }
 
 fn npx_exe() -> &'static str {
-    if cfg!(windows) { "npx.cmd" } else { "npx" }
+    if cfg!(windows) {
+        "npx.cmd"
+    } else {
+        "npx"
+    }
 }
 
 fn run_scaffold_cli(dir: &str, program: &str, args: &[&str]) -> Result<(), AppError> {

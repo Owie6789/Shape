@@ -8,7 +8,7 @@
 ///
 /// This is the single source of truth for *what* the model can do; the human-readable
 /// system prompt only describes *when* to use which tool.
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::agent::model_router::ModelFamily;
 
