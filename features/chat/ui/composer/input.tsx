@@ -2,18 +2,25 @@
 
 import { Add20Regular } from "@fluentui/react-icons/headless/svg/add";
 import { ArrowUp20Regular } from "@fluentui/react-icons/headless/svg/arrow-up";
+import { Calendar20Regular } from "@fluentui/react-icons/headless/svg/calendar";
+import { Chat20Filled } from "@fluentui/react-icons/headless/svg/chat";
 import { Checkmark20Regular } from "@fluentui/react-icons/headless/svg/checkmark";
-import { CodeTextEdit20Filled } from "@fluentui/react-icons/headless/svg/code-text-edit";
-import { ChatMultiple20Filled } from "@fluentui/react-icons/headless/svg/chat-multiple";
-import { CalendarMultiple24Filled } from "@fluentui/react-icons/headless/svg/calendar-multiple";
-import { ColorLine24Filled } from "@fluentui/react-icons/headless/svg/color-line";
+import { ChevronDown20Regular } from "@fluentui/react-icons/headless/svg/chevron-down";
+import { CodeTextEdit20Filled, CodeTextEdit20Regular } from "@fluentui/react-icons/headless/svg/code-text-edit";
+import { Color20Regular } from "@fluentui/react-icons/headless/svg/color";
+import { Copy20Regular } from "@fluentui/react-icons/headless/svg/copy";
+import { ChatMultiple20Filled, ChatMultiple20Regular } from "@fluentui/react-icons/headless/svg/chat-multiple";
+import { CalendarMultiple24Filled, CalendarMultiple24Regular } from "@fluentui/react-icons/headless/svg/calendar-multiple";
+import { ColorLine24Filled, ColorLine24Regular } from "@fluentui/react-icons/headless/svg/color-line";
 import { Incognito24Filled } from "@fluentui/react-icons/headless/svg/incognito";
 import { Document20Regular } from "@fluentui/react-icons/headless/svg/document";
 import { DocumentText20Regular } from "@fluentui/react-icons/headless/svg/document-text";
-import { FolderAdd24Filled } from "@fluentui/react-icons/headless/svg/folder-add";
-import { Connected24Filled } from "@fluentui/react-icons/headless/svg/connected";
-import { DocumentEdit24Filled } from "@fluentui/react-icons/headless/svg/document-edit";
-import { MoviesAndTv24Filled } from "@fluentui/react-icons/headless/svg/movies-and-tv";
+import { Eye20Regular } from "@fluentui/react-icons/headless/svg/eye";
+import { FolderAdd24Filled, FolderAdd24Regular } from "@fluentui/react-icons/headless/svg/folder-add";
+import { Connected24Filled, Connected24Regular } from "@fluentui/react-icons/headless/svg/connected";
+import { DocumentEdit24Filled, DocumentEdit24Regular } from "@fluentui/react-icons/headless/svg/document-edit";
+import { MoviesAndTv24Filled, MoviesAndTv24Regular } from "@fluentui/react-icons/headless/svg/movies-and-tv";
+import { Image20Regular } from "@fluentui/react-icons/headless/svg/image";
 
 
 
@@ -133,6 +140,14 @@ function formatContextWindow(raw?: string): string {
     return t.replace(/([0-9.]+)\s*K\b/i, "$1k").replace(/([0-9.]+)\s*M\b/i, "$1m");
 }
 
+function contextWindowTokens(raw?: string): number | null {
+    const t = (raw ?? "").trim();
+    const m = t.match(/^([0-9.]+)\s*([KM])$/i);
+    if (!m) return null;
+    const n = Number(m[1]);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return m[2].toUpperCase() === "M" ? Math.round(n * 1_000_000) : Math.round(n * 1000);
+}
 
 const ModelTooltip = ({
     model,
@@ -365,7 +380,7 @@ function SwapText({
             if (!el) return;
             setClipping(el.scrollWidth > el.clientWidth + 1);
         });
-    }, []);
+    }, [leaving]);
 
     React.useLayoutEffect(() => {
         fitWidth();
@@ -511,25 +526,6 @@ function ModeMenu({
 }
 
 
-function orderProviders(
-    catalogOrder: readonly string[],
-    allModels: readonly { provider: string }[],
-): string[] {
-    const seen = new Set<string>();
-    const order: string[] = [];
-    for (const p of catalogOrder) {
-        if (seen.has(p)) continue;
-        seen.add(p);
-        order.push(p);
-    }
-    for (const m of allModels) {
-        if (seen.has(m.provider)) continue;
-        seen.add(m.provider);
-        order.push(m.provider);
-    }
-    return order;
-}
-
 export function ChatInput({
     inputValue,
     isLoading,
@@ -561,6 +557,7 @@ export function ChatInput({
     onRemoveQueuedMessage,
     onSendQueuedNow,
     projectRuleFiles = [],
+    onNewChat,
     variant = "default",
 }: Omit<ChatInputProps, "webSearch" | "setWebSearch" | "handleFileUpload">) {
 
@@ -890,8 +887,21 @@ export function ChatInput({
         multiSelectModels && workerExtra.length > 0
             ? `${modelNameBase} +${workerExtra.length}`
             : modelNameBase;
-    // The catalog provider order comes first, then any provider only present in `allModels`.
-    const providerOrder = orderProviders(catalog?.providerOrder ?? getCatalogProviderOrder(), allModels);
+    const providerOrder = React.useMemo(() => {
+        const seen = new Set<string>();
+        const order: string[] = [];
+        for (const p of getCatalogProviderOrder()) {
+            if (seen.has(p)) continue;
+            seen.add(p);
+            order.push(p);
+        }
+        for (const m of allModels) {
+            if (seen.has(m.provider)) continue;
+            seen.add(m.provider);
+            order.push(m.provider);
+        }
+        return order;
+    }, [allModels]);
     const modelSearch = modelQuery.trim().toLowerCase();
     const modelMatches = (m: { id: string; name: string; provider: string }) => {
         if (!modelSearch) return true;

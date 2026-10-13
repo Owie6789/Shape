@@ -17,7 +17,7 @@ import { WindowConsole20Regular } from "@fluentui/react-icons/headless/svg/windo
 
 
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { type IconGlyph, Icon } from "@/components/ui/icon";
 
@@ -71,6 +71,7 @@ export function MentionPicker({
     onClose,
     anchorRef,
     boxRef,
+    caretIndex,
     mode = "mention",
     workflows = [],
 }: {
@@ -95,26 +96,19 @@ export function MentionPicker({
     const [highlight, setHighlight] = useState(0);
     const [pos, setPos] = useState<{ left: number; top: number; width: number } | null>(null);
     const [menuEl, setMenuEl] = useState<HTMLDivElement | null>(null);
-    // The filter follows the query while open, and the user can edit it.
-    const [filter, setFilter] = useState(query);
-    const [seenOpen, setSeenOpen] = useState(open);
-    const [seenQuery, setSeenQuery] = useState(query);
-    // Adjusting state during render: open/close and query changes (no effect needed).
-    if (open !== seenOpen || (open && query !== seenQuery)) {
-        setSeenOpen(open);
-        setSeenQuery(query);
+    const [filter, setFilter] = useState("");
+
+    useEffect(() => {
         if (open) setFilter(query);
-        else {
-            setPos(null);
-            setActiveCategory(null);
-            setHighlight(0);
-        }
-    }
+    }, [open, query]);
 
     const q = filter.trim().toLowerCase();
 
     useLayoutEffect(() => {
-        if (!open) return;
+        if (!open) {
+            setPos(null);
+            return;
+        }
         const box = boxRef?.current ?? anchorRef?.current;
         const update = () => {
             if (!box) return;
@@ -126,16 +120,21 @@ export function MentionPicker({
             if (top < 8) top = 8;
             setPos({ left: rect.left, top, width });
         };
-        // Position is measured after layout in the next frame, so the update is not synchronous.
-        const frame = requestAnimationFrame(update);
+        update();
         window.addEventListener("resize", update);
         window.addEventListener("scroll", update, true);
         return () => {
-            cancelAnimationFrame(frame);
             window.removeEventListener("resize", update);
             window.removeEventListener("scroll", update, true);
         };
     }, [open, anchorRef, boxRef, filter, activeCategory, menuEl, files.length, chats.length, mode, workflows.length]);
+
+    useEffect(() => {
+        if (!open) {
+            setActiveCategory(null);
+            setHighlight(0);
+        }
+    }, [open]);
 
     useEffect(() => {
         if (!open || !project_path) return;
@@ -206,6 +205,7 @@ export function MentionPicker({
         if (!open) return;
         let cancelled = false;
         const cached = peekPluginsCache()?.plugins;
+        if (cached) setPlugins(cached);
         void fetchPlugins()
             .then((data) => {
                 if (!cancelled) setPlugins(data.plugins);
@@ -243,8 +243,6 @@ export function MentionPicker({
             }
         }
         return tokens;
-        // Design sessions are re-read each time the menu opens.
-        // eslint-disable-next-line react-hooks/exhaustive-deps -- `open` is the refresh trigger
     }, [open]);
 
     const fileMentions: ChatMention[] = useMemo(() => {
@@ -396,32 +394,22 @@ export function MentionPicker({
     const showCategories = mode === "mention" && !activeCategory;
     const listLen = mode === "slash" ? slashItems.length : rootItems.length;
 
-    // The highlight returns to the first item whenever the visible list changes.
-    const listKey = `${activeCategory}|${filter}|${rootItems.length}|${slashItems.length}|${mode}`;
-    const [seenListKey, setSeenListKey] = useState(listKey);
-    if (listKey !== seenListKey) {
-        setSeenListKey(listKey);
+    useEffect(() => {
         setHighlight(0);
-    }
+    }, [activeCategory, filter, rootItems.length, slashItems.length, mode]);
 
-    const pickItem = useCallback(
-        (item: ChatMention) => {
-            if (item.kind === "design" && item.id) {
-                void trySelectPendingDesignConcept(item.id);
-            }
-            onPick(`${formatMentionToken(item)} `);
-            onClose();
-        },
-        [onPick, onClose],
-    );
+    const pickItem = (item: ChatMention) => {
+        if (item.kind === "design" && item.id) {
+            void trySelectPendingDesignConcept(item.id);
+        }
+        onPick(`${formatMentionToken(item)} `);
+        onClose();
+    };
 
-    const pickSlash = useCallback(
-        (w: AgentWorkflow) => {
-            onPick(`${workflowSlashToken(w)} `);
-            onClose();
-        },
-        [onPick, onClose],
-    );
+    const pickSlash = (w: AgentWorkflow) => {
+        onPick(`${workflowSlashToken(w)} `);
+        onClose();
+    };
 
     useEffect(() => {
         if (!open) return;
@@ -449,7 +437,7 @@ export function MentionPicker({
         };
         window.addEventListener("keydown", onKey, true);
         return () => window.removeEventListener("keydown", onKey, true);
-    }, [open, activeCategory, rootItems, slashItems, highlight, onClose, mode, listLen, pickItem, pickSlash]);
+    }, [open, activeCategory, rootItems, slashItems, highlight, onClose, mode, listLen]);
 
     if (!open || !pos) return null;
 

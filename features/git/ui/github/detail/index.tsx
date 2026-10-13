@@ -3,6 +3,7 @@
 import { ArrowLeft20Regular } from "@fluentui/react-icons/headless/svg/arrow-left";
 import { Chat20Filled } from "@fluentui/react-icons/headless/svg/chat";
 import { Circle20Filled } from "@fluentui/react-icons/headless/svg/circle";
+import { Note20Regular } from "@fluentui/react-icons/headless/svg/note";
 import { Open20Regular } from "@fluentui/react-icons/headless/svg/open";
 import { Search20Regular } from "@fluentui/react-icons/headless/svg/search";
 import { Sparkle20Filled } from "@fluentui/react-icons/headless/svg/sparkle";

@@ -1,6 +1,7 @@
 "use client";
 
 import { Alert20Regular } from "@fluentui/react-icons/headless/svg/alert";
+import { Code20Regular } from "@fluentui/react-icons/headless/svg/code";
 import { Dismiss20Regular } from "@fluentui/react-icons/headless/svg/dismiss";
 
 
@@ -165,13 +166,22 @@ export function DesignStudio({
     const { iframeSrc, reloadKey, urlBar } = usePreviewStore();
     const [bootRoot, setBootRoot] = useState(projectPath);
     const [designerRoot, setDesignerRoot] = useState(projectPath);
+    const [framework, setFramework] = useState("");
     const [pages, setPages] = useState<DesignPage[]>([]);
+    const [assets, setAssets] = useState<Array<{
+        path: string;
+        name: string;
+        bytes: number;
+        kind: "image" | "font" | "video" | "vector" | "style" | "component" | "code";
+    }>>([]);
+    const [layers, setLayers] = useState<DesignLayerSnapshot[]>([]);
     const [selected, setSelected] = useState<DesignElementSnapshot | null>(null);
     const [target, setTarget] = useState<SourceTarget | null>(null);
     const [mappingError, setMappingError] = useState<string | null>(null);
     const [bootError, setBootError] = useState<string | null>(null);
     const [ready, setReady] = useState(false);
     const [booting, setBooting] = useState(true);
+    const [saved, setSaved] = useState(true);
     const [zoom, setZoom] = useState(100);
     const [toolMode, setToolMode] = useState<DesignToolMode>("normal");
     const [tabs, setTabs] = useState<BrowserTab[]>([]);
@@ -519,6 +529,7 @@ export function DesignStudio({
         setBooting(true);
         setReady(false);
         setBootError(null);
+        setLayers([]);
         setSelected(null);
         setTarget(null);
         setThemeTokens([]);
@@ -527,18 +538,20 @@ export function DesignStudio({
             try {
                 const info = await commands.inspectDesignProject(bootRoot);
                 if (cancelled) return;
+                setFramework(info.framework);
                 setDesignerRoot(info.projectRoot);
                 if (!info.supported) {
                     setBootError("Design mode supports React + Vite, Next.js, Astro, and Remix.");
                     setBooting(false);
                     return;
                 }
-                const [discovered] = await Promise.all([
+                const [discovered, projectAssets] = await Promise.all([
                     discoverDesignPages(info.projectRoot),
                     commands.listDesignAssets(info.projectRoot),
                 ]);
                 if (cancelled) return;
                 setPages(discovered);
+                setAssets(projectAssets);
                 await commands.registerDesignBridge(DESIGN_BRIDGE_SCRIPT);
                 if (cancelled) return;
 
@@ -643,6 +656,7 @@ export function DesignStudio({
             } else if (data.type === "shape-design-tokens" && Array.isArray(data.themeTokens)) {
                 setThemeTokens(data.themeTokens);
             } else if (data.type === "shape-design-tree" && Array.isArray(data.layers)) {
+                setLayers(data.layers);
             } else if (data.type === "shape-design-selection") {
                 if (data.element) {
                     setSelected(data.element);
@@ -665,6 +679,7 @@ export function DesignStudio({
             } else if (data.type === "shape-design-commit-styles" && data.element && data.styles) {
                 setSelected(data.element);
                 void (async () => {
+                    setSaved(false);
                     try {
                         await persistJsx(data.element!, { styles: data.styles });
                         setMappingError(null);
@@ -673,10 +688,12 @@ export function DesignStudio({
                             cause instanceof Error ? cause.message : String(cause),
                         );
                     } finally {
+                        setSaved(true);
                     }
                 })();
             } else if (data.type === "shape-design-commit-text" && data.element) {
                 void (async () => {
+                    setSaved(false);
                     try {
                         await persistJsx(data.element!, { text: data.text ?? "" });
                         setMappingError(null);
@@ -685,10 +702,12 @@ export function DesignStudio({
                             cause instanceof Error ? cause.message : String(cause),
                         );
                     } finally {
+                        setSaved(true);
                     }
                 })();
             } else if (data.type === "shape-design-commit-attr" && data.element && data.attributes) {
                 void (async () => {
+                    setSaved(false);
                     try {
                         await persistJsx(data.element!, { attributes: data.attributes });
                         setMappingError(null);
@@ -697,10 +716,12 @@ export function DesignStudio({
                             cause instanceof Error ? cause.message : String(cause),
                         );
                     } finally {
+                        setSaved(true);
                     }
                 })();
             } else if (data.type === "shape-design-reorder" && data.element) {
                 void (async () => {
+                    setSaved(false);
                     try {
                         await persistReorder(data.element!, data.before ?? null);
                         setMappingError(null);
@@ -709,6 +730,7 @@ export function DesignStudio({
                             cause instanceof Error ? cause.message : String(cause),
                         );
                     } finally {
+                        setSaved(true);
                     }
                 })();
             } else if (
@@ -723,6 +745,7 @@ export function DesignStudio({
                         );
                         return;
                     }
+                    setSaved(false);
                     try {
                         await commands.applyDesignSourcePatch({
                             projectPath: designerRoot,
@@ -736,6 +759,7 @@ export function DesignStudio({
                     } catch {
                         previewReload();
                     } finally {
+                        setSaved(true);
                     }
                 })();
             }
@@ -849,6 +873,7 @@ export function DesignStudio({
                 { type: "shape-design-apply-preview", styles, key: current.key },
                 "*",
             );
+            setSaved(false);
             try {
                 await persistJsx(current, { styles });
                 setMappingError(null);
@@ -857,6 +882,7 @@ export function DesignStudio({
                     cause instanceof Error ? cause.message : String(cause),
                 );
             } finally {
+                setSaved(true);
             }
         },
         [persistJsx, selected],
@@ -893,12 +919,14 @@ export function DesignStudio({
                 "*",
             );
             setSelected({ ...current, text });
+            setSaved(false);
             try {
                 await persistJsx(current, { text });
                 setMappingError(null);
             } catch (cause) {
                 setMappingError(cause instanceof Error ? cause.message : String(cause));
             } finally {
+                setSaved(true);
             }
         },
         [persistJsx, selected],
@@ -916,12 +944,14 @@ export function DesignStudio({
                 ...current,
                 attributes: { ...current.attributes, [name]: value },
             });
+            setSaved(false);
             try {
                 await persistJsx(current, { attributes: { [name]: value } });
                 setMappingError(null);
             } catch (cause) {
                 setMappingError(cause instanceof Error ? cause.message : String(cause));
             } finally {
+                setSaved(true);
             }
         },
         [persistJsx, selected],
@@ -971,6 +1001,7 @@ export function DesignStudio({
                 );
                 return;
             }
+            setSaved(false);
             try {
                 await commands.applyDesignSourcePatch({
                     projectPath: designerRoot,
@@ -984,6 +1015,7 @@ export function DesignStudio({
             } catch {
                 previewReload();
             } finally {
+                setSaved(true);
             }
         },
         [designerRoot, resolveElement, selected, target],

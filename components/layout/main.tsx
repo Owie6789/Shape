@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useProjectState, commands, getProjectSnapshot } from "@/lib/backend";
 import { usePathname } from "next/navigation";
 import { AgentLayout, openProject } from "@/features/agent";
@@ -97,13 +97,18 @@ export default function Main({ children }: { children: React.ReactNode }) {
                 await commands.openFile(selected, name);
             }
         };
+        const handleOpenFolderRequest = () => {
+            window.dispatchEvent(new Event("shape-open-project-pick"));
+        };
 
         window.addEventListener("shape-open-settings", handleOpenSettings);
         window.addEventListener("open-file-request", handleOpenFileRequest);
+        window.addEventListener("open-folder-request", handleOpenFolderRequest);
 
         return () => {
             window.removeEventListener("shape-open-settings", handleOpenSettings);
             window.removeEventListener("open-file-request", handleOpenFileRequest);
+            window.removeEventListener("open-folder-request", handleOpenFolderRequest);
         };
     }, []);
 

@@ -11,7 +11,12 @@ import {
     type ShapeSettings,
 } from "@/lib/settings";
 import { commands, useProjectState } from "@/lib/backend";
-import { listen } from "@/lib/tauri/client-api";
+import type { PackageDep, PackageInfo } from "@/lib/backend/types";
+import { resolvePackageManager } from "@/lib/workspace/package-manager";
+import { notify } from "@/features/notifications";
+import { appRoute } from "@/lib/window/app-route";
+import { listen, WebviewWindow } from "@/lib/tauri/client-api";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { SearchInput } from "@/components/ui/search";
 import { Button } from "@/components/ui/button";
@@ -45,11 +50,13 @@ import {
 } from "@/lib/window/updater";
 import { HostedSidebarBack } from "@/features/agent/sidebar/hosted-nav";
 import { Icon } from "@/components/ui/icon";
+import { ShapeLogo } from "@/components/ui/shape-logo";
 import { SETTINGS_NAV, allSettingsLeaves, type SettingsNavLeaf } from "./shared/nav";
 import { KeyboardShortcutsView } from "./sections/shortcuts";
 import { PluginsSettingsView } from "./sections/plugins";
 import { McpSettingsView } from "./sections/mcp";
 import { SkillsSettings } from "./sections/skills";
+import { Skeleton } from "@/features/git/ui/shared/skeletons";
 import { useRouter } from "next/navigation";
 import { useShapeAuth } from "@/lib/cloud/store";
 import { useRuntimeFlag } from "@/lib/runtime/store";
@@ -348,8 +355,216 @@ function AiSettings({
     return <AiSettingsPanel settings={settings} page={page} />;
 }
 
+function LintSettings({ settings }: { settings: ShapeSettings }) {
+    const eslint = settings.eslint;
+    const prettier = settings.prettier;
+    return (
+        <>
+            <SettingSection id="settings-tools-lint" title="ESLint">
+                <SettingRow title="Enable ESLint">
+                    <SettingSwitch checked={eslint.enable} onChange={(v) => updateSettingSection("eslint", { enable: v })} />
+                </SettingRow>
+                <SettingRow title="Fix On Save">
+                    <SettingSwitch checked={eslint.fixOnSave} onChange={(v) => updateSettingSection("eslint", { fixOnSave: v })} />
+                </SettingRow>
+            </SettingSection>
+            <SettingSection title="Prettier">
+                <SettingRow title="Enable Prettier">
+                    <SettingSwitch checked={prettier.enable} onChange={(v) => updateSettingSection("prettier", { enable: v })} />
+                </SettingRow>
+            </SettingSection>
+        </>
+    );
+}
 
+function LspSettings({ settings }: { settings: ShapeSettings }) {
+    const lsp = settings.lsp;
+    return (
+        <>
+            <SettingSection id="settings-languages" title="Language servers">
+                <SettingCard>
+                <SettingRow title="TypeScript / JavaScript">
+                    <SettingSwitch checked={lsp.typescript} onChange={(v) => updateSettingSection("lsp", { typescript: v })} />
+                </SettingRow>
+                <SettingRow title="HTML">
+                    <SettingSwitch checked={lsp.html} onChange={(v) => updateSettingSection("lsp", { html: v })} />
+                </SettingRow>
+                <SettingRow title="CSS / SCSS / Less">
+                    <SettingSwitch checked={lsp.css} onChange={(v) => updateSettingSection("lsp", { css: v })} />
+                </SettingRow>
+                <SettingRow title="JSON">
+                    <SettingSwitch checked={lsp.json} onChange={(v) => updateSettingSection("lsp", { json: v })} />
+                </SettingRow>
+                <SettingRow title="Tailwind CSS">
+                    <SettingSwitch checked={lsp.tailwindcss} onChange={(v) => updateSettingSection("lsp", { tailwindcss: v })} />
+                </SettingRow>
+                </SettingCard>
+            </SettingSection>
+            <SettingSection title="Editor Assistance">
+                <SettingRow title="Emmet">
+                    <SettingSwitch checked={lsp.emmet} onChange={(v) => updateSettingSection("lsp", { emmet: v })} />
+                </SettingRow>
+            </SettingSection>
+        </>
+    );
+}
 
+function NodeSettings({ settings }: { settings: ShapeSettings }) {
+    const node = settings.node;
+    const { project_path } = useProjectState();
+    const [info, setInfo] = useState<PackageInfo | null>(null);
+    const [loading, setLoading] = useState(() => Boolean(project_path));
+    const [installName, setInstallName] = useState("");
+
+    const pm = resolvePackageManager(project_path);
+
+    const loadPackages = useCallback(async () => {
+        if (!project_path) {
+            setInfo(null);
+            setLoading(false);
+            return;
+        }
+        setLoading(true);
+        try {
+            const data = await commands.getPackageInfo(project_path, pm);
+            setInfo(data);
+        } catch {
+            setInfo(null);
+        } finally {
+            setLoading(false);
+        }
+    }, [project_path, pm]);
+
+    useEffect(() => {
+        void loadPackages();
+    }, [loadPackages]);
+
+    const allDeps: PackageDep[] = [
+        ...(info?.dependencies ?? []),
+        ...(info?.dev_dependencies ?? []),
+    ];
+
+    return (
+        <>
+            <SettingSection id="settings-node" title="Node.js">
+                <SettingRow title="Coding assistance for Node.js">
+                    <SettingSwitch
+                        checked={node.codingAssistance}
+                        onChange={(v) => {
+                            updateSettingSection("node", { codingAssistance: v });
+                            updateSettingSection("lsp", { typescript: v });
+                        }}
+                    />
+                </SettingRow>
+                <SettingRow title="Package manager">
+                    <SettingSelect
+                        value={node.packageManager}
+                        options={[
+                            { value: "auto", label: "Auto-detect" },
+                            { value: "npm", label: "npm" },
+                            { value: "yarn", label: "yarn" },
+                            { value: "pnpm", label: "pnpm" },
+                            { value: "bun", label: "bun" },
+                        ]}
+                        onChange={(v) => updateSettingSection("node", { packageManager: v })}
+                        className="w-48"
+                    />
+                </SettingRow>
+            </SettingSection>
+
+            <SettingSection title="Packages" description={project_path ? `Using ${pm} for ${info?.name ?? "project"}` : undefined}>
+                <SettingCard>
+                {!project_path ? (
+                    <div className="px-3.5 py-4 text-sm text-text-muted">Open a folder to view installed packages.</div>
+                ) : (
+                    <div className="overflow-hidden">
+                        <div className="px-3.5 py-3 flex gap-2 items-center border-b border-border">
+                            <Input
+                                placeholder="Package name to install..."
+                                value={installName}
+                                onChange={(e) => setInstallName(e.target.value)}
+                                className="h-8 text-sm flex-1 rounded-lg bg-surface-3"
+                            />
+                            <Button
+                                size="sm"
+                                variant="ghost"
+                                disabled={!installName.trim() || loading}
+                                onClick={async () => {
+                                    try {
+                                        await commands.npmInstall(project_path, installName.trim(), false, pm);
+                                        notify.success("Packages", `Installed ${installName.trim()}`);
+                                        setInstallName("");
+                                        void loadPackages();
+                                    } catch (e) {
+                                        notify.error("Install failed", String(e));
+                                    }
+                                }}
+                            >
+                                Install
+                            </Button>
+                            <Button
+                                size="sm"
+                                variant="default"
+                                disabled={loading}
+                                onClick={async () => {
+                                    try {
+                                        await commands.runInstallAll(project_path, pm);
+                                        notify.success("Packages", "Dependencies installed");
+                                        void loadPackages();
+                                    } catch (e) {
+                                        notify.error("Install failed", String(e));
+                                    }
+                                }}
+                            >
+                                Run install
+                            </Button>
+                        </div>
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-sm">
+                                <thead>
+                                    <tr className="text-left text-text-muted border-b border-border-subtle">
+                                        <th className="px-3.5 py-2 font-medium">Package</th>
+                                        <th className="px-3 py-2 font-medium">Version</th>
+                                        <th className="px-3 py-2 font-medium text-right">Latest</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {loading &&
+                                        Array.from({ length: 6 }, (_, i) => (
+                                            <tr key={i} aria-hidden>
+                                                <td className="px-3.5 py-2">
+                                                    <Skeleton className="h-4 w-36" />
+                                                </td>
+                                                <td className="px-3 py-2">
+                                                    <Skeleton className="h-4 w-14" />
+                                                </td>
+                                                <td className="px-3 py-2">
+                                                    <Skeleton className="ml-auto h-4 w-12" />
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    {!loading && allDeps.length === 0 && (
+                                        <tr><td colSpan={3} className="px-3.5 py-4 text-text-muted">No packages found.</td></tr>
+                                    )}
+                                    {!loading && allDeps.map((dep) => (
+                                        <tr key={dep.name} className="border-b border-border-subtle/40 hover:bg-panel-hover/40">
+                                            <td className="px-3.5 py-2 text-text-primary">{dep.name}</td>
+                                            <td className="px-3 py-2 text-text-muted">{dep.installed ?? dep.version}</td>
+                                            <td className="px-3 py-2 text-right text-text-muted">
+                                                {dep.latest && dep.latest !== dep.installed ? dep.latest : "-"}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                )}
+                </SettingCard>
+            </SettingSection>
+        </>
+    );
+}
 
 function DeveloperSettings({ settings }: { settings: ShapeSettings }) {
     const dev = settings.developer;
@@ -752,7 +967,76 @@ function FeedbackSection() {
     );
 }
 
+function PythonSettings({ settings }: { settings: ShapeSettings }) {
+    const { project_path } = useProjectState();
+    const selected = settings.python?.interpreterPath ?? "auto";
+    const [interpreters, setInterpreters] = useState<{ path: string; label: string; version?: string }[]>([]);
 
+    useEffect(() => {
+        let cancelled = false;
+        void import("@/lib/editor/python-interpreters").then(({ discoverPythonInterpreters }) =>
+            discoverPythonInterpreters(project_path).then((list) => {
+                if (!cancelled) setInterpreters(list);
+            }),
+        );
+        return () => {
+            cancelled = true;
+        };
+    }, [project_path, selected]);
+
+    const options = [
+        { value: "auto", label: "Auto detect on PATH" },
+        ...interpreters.map((i) => ({
+            value: i.path,
+            label: i.version ? `Python ${i.version}  ${i.path}` : `${i.label || "Python"}  ${i.path}`,
+        })),
+    ];
+    if (selected !== "auto" && !options.some((o) => o.value === selected)) {
+        options.push({ value: selected, label: selected });
+    }
+
+    return (
+        <SettingSection id="settings-python" title="Python">
+            <SettingRow title="Interpreter">
+                <div className="flex items-center gap-2">
+                    <SettingSelect
+                        value={selected}
+                        options={options}
+                        onChange={(v) => updateSettingSection("python", { interpreterPath: v })}
+                    />
+                    <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                            void (async () => {
+                                const { open } = await import("@tauri-apps/plugin-dialog");
+                                const picked = await open({
+                                    multiple: false,
+                                    title: "Select Python executable",
+                                });
+                                if (typeof picked === "string" && picked) {
+                                    updateSettingSection("python", { interpreterPath: picked });
+                                }
+                            })();
+                        }}
+                    >
+                        Browse…
+                    </Button>
+                </div>
+            </SettingRow>
+        </SettingSection>
+    );
+}
+
+function ToolsSettings({ settings }: { settings: ShapeSettings }) {
+    return (
+        <>
+            <LintSettings settings={settings} />
+            <NodeSettings settings={settings} />
+            <PythonSettings settings={settings} />
+        </>
+    );
+}
 
 export function SettingsView({
     navPortalTarget,
@@ -820,14 +1104,9 @@ export function SettingsView({
         [resolveTargetFromDeepLink],
     );
 
-    // Deep links are applied when the URL's query changes. Compared during render, so the
-    // selected page is right on the first frame and no effect is needed.
-    const navQuery = searchParams.toString();
-    const [appliedNavQuery, setAppliedNavQuery] = useState<string | null>(null);
-    if (navQuery !== appliedNavQuery) {
-        setAppliedNavQuery(navQuery);
+    useEffect(() => {
         applyNavigation(searchParams.get("category"), searchParams.get("section"));
-    }
+    }, [searchParams, applyNavigation]);
 
     useEffect(() => {
         const handler = (event: Event) => {

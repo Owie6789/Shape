@@ -54,30 +54,22 @@ function TreeNode({
     const [open, setOpen] = useState(false);
     const [children, setChildren] = useState<FileEntry[] | null>(null);
 
-    // Fetch a folder's children the first time it opens. The fetch is async; state is only
-    // written when it resolves.
-    useEffect(() => {
-        if (!open || children !== null || !entry.is_dir) return;
-        let cancelled = false;
-        void commands
-            .lsDir(entry.path)
-            .then((list) => {
-                if (!cancelled) setChildren(sortEntries(list));
-            })
-            .catch(() => {
-                if (!cancelled) setChildren([]);
-            });
-        return () => {
-            cancelled = true;
-        };
-    }, [open, children, entry.is_dir, entry.path]);
+    const load = useCallback(async () => {
+        if (!entry.is_dir) return;
+        try {
+            setChildren(sortEntries(await commands.lsDir(entry.path)));
+        } catch {
+            setChildren([]);
+        }
+    }, [entry.is_dir, entry.path]);
 
-    // A non-empty search opens folders; changing the query is what triggers it.
-    const [seenQuery, setSeenQuery] = useState(query);
-    if (query !== seenQuery) {
-        setSeenQuery(query);
+    useEffect(() => {
+        if (open && children === null) void load();
+    }, [open, children, load]);
+
+    useEffect(() => {
         if (query.trim() && entry.is_dir) setOpen(true);
-    }
+    }, [query, entry.is_dir]);
 
     const pad = 8 + depth * 12;
     const mark = gitMark(statusFor(entry.path));
