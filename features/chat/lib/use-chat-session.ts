@@ -547,20 +547,17 @@ export function useChatSession() {
         }
     };
 
-    const handleAcceptEdit = React.useCallback(
-        async (editId: string) => {
-            const edit = pendingEdits.find((e) => e.id === editId);
-            if (!edit) return;
-            await markEditResolved(edit.file, "applied", edit.replacement);
-            const resolved = resolveChatFilePath(edit.file, project_path);
-            window.dispatchEvent(
-                new CustomEvent("shape-dismiss-diff", {
-                    detail: { path: resolved, rawPath: edit.file },
-                }),
-            );
-        },
-        [pendingEdits, project_path, markEditResolved],
-    );
+    const handleAcceptEdit = React.useCallback(async (editId: string) => {
+        const edit = pendingEdits.find((e) => e.id === editId);
+        if (!edit) return;
+        await markEditResolved(edit.file, "applied", edit.replacement);
+        const resolved = resolveChatFilePath(edit.file, project_path);
+        window.dispatchEvent(
+            new CustomEvent("shape-dismiss-diff", {
+                detail: { path: resolved, rawPath: edit.file },
+            }),
+        );
+    }, [pendingEdits, markEditResolved, project_path]);
 
     const handleRejectEdit = async (editId: string) => {
         const idx = pendingEdits.findIndex((e) => e.id === editId);
