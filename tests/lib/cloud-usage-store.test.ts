@@ -523,6 +523,45 @@ describe("cloud usage store cache and peer fixes", () => {
         expect(readCache()!.cachedAt).toBeGreaterThan(stampedAt);
     });
 
+    it("caches the newer balance a usage check confirmed mid-request", async () => {
+        await signIn();
+
+        let release: (() => void) | undefined;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        let accountStarted = false;
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (input: RequestInfo | URL) => {
+                const url = String(input);
+                if (/\/api\/account(?!\/)/.test(url)) {
+                    accountStarted = true;
+                    await gate;
+                    // Older than the check that lands below.
+                    return jsonReply({ ...ACCOUNT, creditsRemaining: 400 });
+                }
+                return jsonReply({});
+            }),
+        );
+
+        const pending = refreshShapeAuth();
+        await vi.waitFor(() => expect(accountStarted).toBe(true));
+
+        applyUsageCheckResult({ allowed: true, creditsRemaining: 900, tier: "pro" });
+
+        release?.();
+        await pending;
+
+        expect(getShapeAuthState().creditsRemaining).toBe(900);
+        // The cache is what a restart restores. Before the fix it held 400,
+        // the older account figure, so a relaunch rolled the balance back.
+        const cached = JSON.parse(
+            localStorage.getItem("shape-auth-profile") ?? "null",
+        ) as { creditsRemaining: number } | null;
+        expect(cached?.creditsRemaining).toBe(900);
+    });
+
     it("tells peer windows about a balance this window already held", async () => {
         await signIn();
         const balance = getShapeAuthState().creditsRemaining;
