@@ -19,7 +19,9 @@ pub fn get_chat_title(state: tauri::State<'_, AgentState>) -> Result<String, App
 }
 
 #[tauri::command]
-pub fn get_current_conversation_id(state: tauri::State<'_, AgentState>) -> Result<Option<String>, AppError> {
+pub fn get_current_conversation_id(
+    state: tauri::State<'_, AgentState>,
+) -> Result<Option<String>, AppError> {
     Ok(state.current_conversation_id.lock()?.clone())
 }
 
@@ -148,9 +150,13 @@ pub async fn restore_checkpoint(
 ) -> Result<(), AppError> {
     let aborted_turn = {
         let turn_id = state.in_flight_turn_id();
-        let conv_id = state
-            .in_flight_conversation_id()
-            .or_else(|| state.current_conversation_id.lock().ok().and_then(|g| g.clone()));
+        let conv_id = state.in_flight_conversation_id().or_else(|| {
+            state
+                .current_conversation_id
+                .lock()
+                .ok()
+                .and_then(|g| g.clone())
+        });
         if turn_id.is_some() {
             logging::info("chat", "Restore/redo cancelling in-flight generation");
             if let Some(id) = conv_id.as_deref() {
@@ -518,13 +524,7 @@ pub fn fork_conversation(
 
     let new_id = format!("fork-{}", history::now_f64() as u64);
     let new_title = format!("Fork of {source_title}");
-    history::upsert_conversation_snapshot(
-        &state,
-        &proj_path,
-        &new_id,
-        &new_title,
-        sliced.clone(),
-    )?;
+    history::upsert_conversation_snapshot(&state, &proj_path, &new_id, &new_title, sliced.clone())?;
 
     *state.history.lock()? = sliced;
     *state.title.lock()? = Some(new_title.clone());
@@ -589,4 +589,3 @@ pub fn set_message_feedback(
     }
     history::upsert_conversation_snapshot(&state, &path, &id, &title, hist)
 }
-

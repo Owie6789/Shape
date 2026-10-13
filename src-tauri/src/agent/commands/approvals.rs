@@ -51,7 +51,10 @@ pub async fn stop_chat_message(
     if is_live {
         let _ = crate::agent::tools::browse::finish_browse_markup(String::new()).await;
         crate::agent::tools::browse::stop_session();
-        let _ = app.emit("agent-browse", serde_json::json!({"id": "live", "status": "stopped"}));
+        let _ = app.emit(
+            "agent-browse",
+            serde_json::json!({"id": "live", "status": "stopped"}),
+        );
     }
     // Cancel first so waiters observe Stop instead of a fake Reject (which
     // used to look like accepted edits were undone).
@@ -103,8 +106,10 @@ pub async fn stop_chat_message(
         // Background chat: its partial text goes to its stored record, not the live chat.
         // Save into the chat's own project, which can differ from the active one.
         if let Some((owner, conv)) = history::find_conversation_by_id(&target, Some(path)) {
-            let merged = state.merge_in_flight_into_history_for(conv.history, Some(target.as_str()));
-            let _ = history::upsert_conversation_snapshot(&state, &owner, &target, &conv.title, merged);
+            let merged =
+                state.merge_in_flight_into_history_for(conv.history, Some(target.as_str()));
+            let _ =
+                history::upsert_conversation_snapshot(&state, &owner, &target, &conv.title, merged);
         }
     }
     // The in-flight slot is NOT released here. The cancelled turn still unwinds and clears its
@@ -163,7 +168,9 @@ pub async fn apply_file_edit(
     // For manual edits from the UI we use a deterministic full-overwrite path: if the
     // caller provided an `original` block we honour it (search-and-replace), otherwise
     // we treat `replacement` as the full new content. No LLM round-trip needed.
-    let current = tokio::fs::read_to_string(&abs_path).await.unwrap_or_default();
+    let current = tokio::fs::read_to_string(&abs_path)
+        .await
+        .unwrap_or_default();
     let new_content = if original.trim().is_empty() {
         replacement
     } else {
@@ -173,12 +180,8 @@ pub async fn apply_file_edit(
     if let Some(parent) = std::path::Path::new(&abs_path).parent() {
         let _ = tokio::fs::create_dir_all(parent).await;
     }
-    crate::domain::filesystem::service::save_file(
-        app.clone(),
-        abs_path.clone(),
-        new_content,
-    )
-    .await?;
+    crate::domain::filesystem::service::save_file(app.clone(), abs_path.clone(), new_content)
+        .await?;
     let _ = app.emit("shape-file-edited", abs_path);
     Ok(())
 }
@@ -224,7 +227,11 @@ pub fn resolve_edit_approval(
 ) -> Result<(), AppError> {
     logging::info(
         "editing",
-        &format!("Edit {}: {}", if approved { "approved" } else { "rejected" }, id),
+        &format!(
+            "Edit {}: {}",
+            if approved { "approved" } else { "rejected" },
+            id
+        ),
     );
     if !state.pending_edits.lock()?.contains_key(&id) {
         return Err(AppError::Message(
@@ -304,4 +311,3 @@ pub fn select_design_preview(
     state.design_pick_answers.lock()?.insert(id, payload);
     Ok(())
 }
-
