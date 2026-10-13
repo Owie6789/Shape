@@ -68,6 +68,7 @@
               "developing/language-servers",
               "developing/indexing-and-search",
               "developing/client-trust",
+              "developing/usage-freshness",
               "developing/tauri-ipc"
             ]
           }

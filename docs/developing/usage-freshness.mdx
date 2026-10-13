@@ -1,0 +1,65 @@
+---
+title: Usage freshness
+description: How credits and Auto limits reach the UI without going stale.
+order: 8
+icon: ri-gauge-line
+---
+
+The sidebar ring, the composer ring, and Settings → Account all read the same numbers from the cloud auth store through `useShapeAuth()`: `tier`, `creditsRemaining`, `creditsIncluded`, `freeAutoPercent`.
+
+The server owns those numbers. The client's whole job is to keep the copies it shows from falling behind.
+
+## Where the numbers come from
+
+Two endpoints carry them, and both are already on a path the app walks:
+
+| Endpoint | Carries | When it runs |
+| --- | --- | --- |
+| `GET /api/account` | everything, including `freeAutoPercent` | boot, after usage-changing actions, focus, idle timer |
+| `POST /api/usage/check` | `creditsRemaining`, `tier` | before a gated AI action |
+
+`/api/usage/check` used to be read for `allowed` alone and the rest thrown away. It now feeds the store too — the request was already being paid for.
+
+## The fast path
+
+`applyUsageSnapshot()` in `lib/cloud/store.ts` is the single entry point. Any caller that learns something hands it over:
+
+```ts
+applyUsageSnapshot({ creditsRemaining: 940 });
+```
+
+The snapshot is reduced by `mergeUsageSnapshot()` to the fields that actually differ. If nothing differs it returns `null` and the store does not emit — an idle poll must not re-render every usage surface. When something does differ, the store patches state, patches the cached profile, stamps `usageUpdatedAt`, and broadcasts.
+
+`lib/cloud/usage.ts` holds the pure pieces (merge, freshness, ordering) so they can be tested without the store.
+
+## Refreshing
+
+Every refresh goes through `UsageRefreshScheduler`. It does two things at once:
+
+- **Coalesces.** `refreshShapeUsage()` debounces, so five agent turns finishing in a row cost one `/api/account` call rather than five.
+- **Serialises.** Each load starts only after the previous one settles, so a slow response can never overwrite a newer one.
+
+`refreshShapeAuth()` skips the debounce for the cases that mean *now*: the Settings → Refresh button and regaining connectivity.
+
+Timers are deliberately boring. The idle poll stays at 30 minutes (`REVALIDATE_INTERVAL_MS`) because it runs on every signed-in desktop client. Immediacy comes from events, not from a shorter interval. Focus and visibility refresh only once the snapshot is older than `USAGE_STALE_MS` (30s), which is what keeps the event-driven path affordable.
+
+## Across windows
+
+Each Shape window holds its own copy of the store. A refresh in one window is broadcast as `shape-usage-changed` on both the DOM and the Tauri event bus, and receivers apply it without re-broadcasting.
+
+Broadcasts carry `origin` and a monotonic `seq`. Tauri dispatches each `emit` as its own task, so two snapshots sent back to back can arrive in either order; a receiver drops anything older than what it has already applied from that origin. Without this a stale balance can land last and sit wrong until the next poll.
+
+## What is not available client-side
+
+The Rust agent emits `chat_complete` with token counts, but `creditsCharged` is always `null` and there is no Auto-percentage field. So the client cannot project a balance locally after a turn:
+
+- On a **premium model** the ring moves as soon as the account refresh lands.
+- On **Auto / free** the ring shows `freeAutoPercent`, which only `/api/account` provides.
+
+Until the agent forwards a charged amount, that is the floor. The ring tooltip carries the last turn's tokens meanwhile, and Settings → Account shows how old the figures are.
+
+## Tests
+
+- `tests/lib/cloud-usage.test.ts` — merge, freshness, ordering, scheduler.
+- `tests/lib/cloud-usage-store.test.ts` — the store against a mocked `fetch`, including the sign-out race.
+- `tests/features/usage-ring.test.tsx` — the real sidebar ring component driven through the real store.
