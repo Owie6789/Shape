@@ -131,6 +131,10 @@ jobs:
     name: Rust Lints (fmt, clippy)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
     steps:
       - uses: actions/checkout@v4
 
@@ -189,17 +193,27 @@ jobs:
             try {
               log = fs.readFileSync('clippy-check.txt', 'utf8');
             } catch (e) {
-              log = 'Failed to read clippy-check.txt';
+              log = 'Failed to read clippy-check.txt: ' + e.message;
             }
-            // Truncate to avoid too large comment
+            // Also write to summary for artifact-free debugging
+            const summary = `### Clippy Check Failed\n\n\`\`\`\n${log.slice(0, 50000)}\n\`\`\`\n`;
+            try {
+              fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary);
+            } catch(e) {
+              core.info('Failed to write summary: ' + e.message);
+            }
             const truncated = log.slice(0, 60000);
             const body = `### 🔴 Clippy Check Failed\n\nClippy found warnings that must be fixed:\n\n\`\`\`\n${truncated}\n\`\`\`\n\nPlease run \`cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings\` locally and fix.`;
-            github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: body
-            });
+            try {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body
+              });
+            } catch (e) {
+              core.warning('Failed to create comment: ' + e.message);
+            }
 
       - name: Upload clippy log on failure
         if: failure()
