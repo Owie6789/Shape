@@ -60,6 +60,12 @@ type LiveTurn = {
     messages: ChatMessage[];
     activityLabel: string | null;
     turnPhase: TurnPhase;
+    /**
+     * Whose session started this turn. Read at completion instead of the live
+     * auth state: if the account switched mid-turn, the cost belongs to the
+     * account that ran it, not whoever is signed in when it lands.
+     */
+    startedByUserId: string | null;
 };
 
 type ChatStreamContextValue = ChatStreamState & {
@@ -144,6 +150,25 @@ export function ChatStreamProvider({ children }: { children: React.ReactNode }) 
     const [contextSummarized, setContextSummarized] = React.useState(false);
     const viewingIdRef = React.useRef<string | null>(null);
     const liveTurnsRef = React.useRef<Map<string, LiveTurn>>(new Map());
+    /** Signed-in user as of the last read, so a turn can be stamped with its owner. */
+    const turnOwnerRef = React.useRef<string | null>(null);
+
+    // Keep the owner current so a turn started under one account is stamped with
+    // that account even if the session changes before it completes.
+    React.useEffect(() => {
+        let cancelled = false;
+        const read = () => {
+            void import("@/lib/cloud/store").then(({ getShapeAuthState }) => {
+                if (!cancelled) turnOwnerRef.current = getShapeAuthState().userId;
+            });
+        };
+        read();
+        window.addEventListener("shape-auth-changed", read);
+        return () => {
+            cancelled = true;
+            window.removeEventListener("shape-auth-changed", read);
+        };
+    }, []);
     const messagesRef = React.useRef<ChatMessage[]>(messages);
     const turnIdRef = React.useRef<string | null>(null);
     const ignoredIdsRef = React.useRef<Set<string>>(new Set());
@@ -217,6 +242,7 @@ export function ChatStreamProvider({ children }: { children: React.ReactNode }) 
                     messages: viewingIdRef.current === liveId ? history : (existing?.messages ?? history),
                     activityLabel: gen.activityLabel ?? existing?.activityLabel ?? "Thinking",
                     turnPhase: existing?.turnPhase ?? "thinking",
+                    startedByUserId: existing?.startedByUserId ?? turnOwnerRef.current,
                 });
             }
 
@@ -277,6 +303,7 @@ export function ChatStreamProvider({ children }: { children: React.ReactNode }) 
             messages: next,
             activityLabel: "Thinking",
             turnPhase: "thinking",
+            startedByUserId: turnOwnerRef.current,
         });
         setMessages(next);
         setIsLoading(true);
@@ -362,6 +389,7 @@ export function ChatStreamProvider({ children }: { children: React.ReactNode }) 
                     }
                 }
                 const key = convId || PENDING_KEY;
+                const pendingOwner = liveTurnsRef.current.get(PENDING_KEY)?.startedByUserId;
                 liveTurnsRef.current.delete(PENDING_KEY);
                 liveTurnsRef.current.set(key, {
                     conversationId: convId,
@@ -369,6 +397,7 @@ export function ChatStreamProvider({ children }: { children: React.ReactNode }) 
                     messages: snapshot,
                     activityLabel: "Thinking",
                     turnPhase: "thinking",
+                    startedByUserId: pendingOwner ?? turnOwnerRef.current,
                 });
                 const stayOnThisTurn = !viewingIdRef.current || viewingIdRef.current === convId;
                 if (stayOnThisTurn) {
@@ -412,6 +441,7 @@ export function ChatStreamProvider({ children }: { children: React.ReactNode }) 
                                 messages: viewingIdRef.current === convId ? messagesRef.current : [],
                                 activityLabel: "Thinking",
                                 turnPhase: "thinking",
+                                startedByUserId: turnOwnerRef.current,
                             });
                         }
                     }
@@ -457,15 +487,21 @@ export function ChatStreamProvider({ children }: { children: React.ReactNode }) 
                         import("@/lib/chat/last-turn-usage"),
                         import("@/lib/cloud/store"),
                     ]).then(([{ setLastTurnUsage }, { getShapeAuthState }]) => {
+                        const currentUserId = getShapeAuthState().userId;
+                        turnOwnerRef.current = currentUserId;
+                        // Stamp the account that started the turn, not whoever is
+                        // signed in now. Reading the live state here attributed
+                        // the previous account's cost to the new one whenever a
+                        // switch overlapped completion.
+                        const startedBy = liveTurnsRef.current.get(
+                            conversationId ?? PENDING_KEY,
+                        )?.startedByUserId;
                         setLastTurnUsage({
                             tokens: stats.tokens ?? ((stats.inputTokens ?? 0) + (stats.outputTokens ?? 0)),
                             inputTokens: stats.inputTokens,
                             creditsCharged: stats.creditsCharged ?? 0,
                             usedAuto: stats.usedAuto,
-                            // Stamp whose turn this was. The record outlives the
-                            // session otherwise, so the next account to sign in
-                            // would be shown this user's cost.
-                            userId: getShapeAuthState().userId,
+                            userId: startedBy ?? currentUserId,
                         });
                     });
                 }
