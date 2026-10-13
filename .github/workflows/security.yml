@@ -45,18 +45,34 @@ jobs:
           queries: security-and-quality
 
       - name: Autobuild
+        id: autobuild
         uses: github/codeql-action/autobuild@v3
+        continue-on-error: true
         # For JS/TS, autobuild is no-op (interpreted). For Rust, it runs cargo build.
-        # We also ensure preview runtime is built for Next.js.
-        # If autobuild fails, we fallback to manual build.
+        # If autobuild fails, we fallback to manual build for JS, and still try analysis
+
       - name: Manual build fallback (Next.js)
-        if: matrix.language == 'javascript-typescript'
+        if: always() && matrix.language == 'javascript-typescript'
         run: |
+          set -euo pipefail
+          echo "Autobuild outcome: ${{ steps.autobuild.outcome }}"
+          if [ "${{ steps.autobuild.outcome }}" = "failure" ]; then
+            echo "::warning::Autobuild failed, running manual build fallback"
+          fi
           npm ci
           npm run build:runtime
-          npm run build || true
+          # Build may fail due to missing env, but we still want CodeQL to try
+          npm run build || echo "::warning::Next.js build failed, but continuing for CodeQL"
         env:
           NEXT_PUBLIC_SHAPE_WEBSITE_URL: https://www.useshape.org
+
+      - name: Check build status
+        if: always()
+        run: |
+          echo "Autobuild outcome: ${{ steps.autobuild.outcome }}"
+          if [ "${{ steps.autobuild.outcome }}" = "failure" ] && [ "${{ matrix.language }}" != "javascript-typescript" ]; then
+            echo "::warning::Autobuild failed for ${{ matrix.language }} - CodeQL may have incomplete results"
+          fi
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
@@ -76,10 +92,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check dependency graph status
+        id: dep-graph-check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Try to check if dependency graph is enabled by querying SBOM endpoint
+          # If graph is disabled, this will 404
+          if gh api repos/${{ github.repository }}/dependency-graph/sbom --jq '.' >/dev/null 2>&1; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "✓ Dependency graph is enabled"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Dependency graph appears disabled - dependency review will be skipped"
+            echo "Enable in: Settings > Code security and analysis > Dependency graph"
+          fi
+
       - name: Dependency Review
         id: dep-review
+        if: steps.dep-graph-check.outputs.enabled == 'true'
         uses: actions/dependency-review-action@v4
-        continue-on-error: true
         with:
           fail-on-severity: high
           deny-licenses: GPL-2.0, GPL-3.0
@@ -89,34 +122,22 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
+          GRAPH_ENABLED="${{ steps.dep-graph-check.outputs.enabled }}"
           OUTCOME="${{ steps.dep-review.outcome }}"
+          echo "Dependency graph enabled: $GRAPH_ENABLED"
           echo "Dependency review outcome: $OUTCOME"
+          if [ "$GRAPH_ENABLED" = "false" ]; then
+            echo "::warning::Dependency graph disabled - skipping review. Enable for security."
+            echo "This is not blocking, but repo should enable dependency graph"
+            exit 0
+          fi
           if [ "$OUTCOME" = "failure" ]; then
-            # Check if failure is due to disabled dependency graph (not a real vulnerability)
-            # The action logs "Dependency review is not supported" when graph is disabled
-            # In that case, warn but don't block - repo owner should enable graph
-            # For real vulnerabilities, block
-            # We check the previous step's logs via GitHub API would be complex, so we use a heuristic:
-            # If the job would have blocked on vulnerabilities, it would have created a comment
-            # For now, we fail closed for security - if graph is disabled, we warn and allow
-            # but log that graph should be enabled
-            echo "::warning::Dependency review failed - checking if due to disabled graph"
-            echo "If this is due to 'Dependency review is not supported', enable dependency graph in repo settings"
-            echo "Settings > Code security and analysis > Dependency graph > Enable"
-            # To distinguish, we check if the failure is from graph disabled by looking at whether
-            # the action would have reported vulnerabilities - if no vuln comment, it's likely graph disabled
-            # For security, we will NOT block on graph-disabled, but WILL block on real vulns
-            # The action with fail-on-severity: high will fail the step when vulns found
-            # So we need to check if it failed due to vulns - we can check by looking at the step conclusion
-            # and whether a comment was posted (hard to detect), so we fail open for graph-disabled
-            # but warn strongly
-            # TODO: Enable dependency graph and remove continue-on-error
-            echo "::warning::Allowing PR to pass despite dependency review failure - please enable dependency graph"
-            echo "For strict security, after enabling graph, remove continue-on-error and make this step fail closed"
+            echo "::error::Dependency review found high-severity vulnerabilities or license issues - blocking PR"
+            exit 1
           elif [ "$OUTCOME" = "success" ]; then
             echo "✓ Dependency review passed - no high-severity vulnerabilities"
           else
-            echo "::warning::Dependency review skipped or neutral: $OUTCOME"
+            echo "::warning::Dependency review outcome: $OUTCOME (may be skipped)"
           fi
 
   # ─────────────────────────────────────────────────────────
