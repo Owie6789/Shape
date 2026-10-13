@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import Chat from "@/features/chat/ui/chat";
 import { useProjectState } from "@/lib/backend";
@@ -17,6 +17,7 @@ import { ProjectQuickPickHost } from "@/features/chat/ui/shell/project-pick";
 import { startAgentBackgroundExitToasts } from "@/features/chat/lib/agent-terminal-notify";
 import { useWindowControls } from "@/features/agent/workbench/titlebar/hooks/use-window-controls";
 import { WindowControls } from "@/features/agent/workbench/titlebar/ui/window-controls";
+import { NewFilePromptHost } from "./workspace/new-file-prompt";
 
 const MIN_WORKSPACE = 360;
 const MIN_WORKSPACE_SOFT = 280;
@@ -27,7 +28,8 @@ const WINDOW_MIN_HEIGHT = 500;
 const WINDOW_MIN_WIDTH = 1000;
 const MAX_WORKSPACE_RATIO = 0.72;
 const MAX_WORKSPACE_PX = 1200;
-const SPLASH_KEY = "shape-agent-splash-seen";
+const SPLASH_KEY = "bettershape-agent-splash-seen";
+const ZEN_KEY = "bettershape-zen-mode";
 
 function layoutMinWidth(sidebarOpen: boolean, workspaceOpen: boolean) {
     const sidebar = sidebarOpen ? SIDEBAR_EXPANDED : 0;
@@ -49,26 +51,24 @@ function SidebarPeek({
     onEnter: () => void;
     onLeave: () => void;
 }) {
-    const hostRef = useRef<HTMLDivElement>(null);
+    // The list stays mounted for a moment after the flyout hides, so its exit can finish.
+    // It is shown while `shown` is true, or until that delay ends.
     const [host, setHost] = useState<HTMLElement>();
     const [mounted, setMounted] = useState(shown);
-
-    useLayoutEffect(() => {
-        setHost(hostRef.current ?? undefined);
-    }, []);
+    // Opening from hidden must mount the list too, so a later hide can run its exit delay.
+    // Adjusted during render instead of in an effect.
+    if (shown && !mounted) setMounted(true);
+    const attachHost = useCallback((el: HTMLDivElement | null) => setHost(el ?? undefined), []);
 
     useEffect(() => {
-        if (shown) {
-            setMounted(true);
-            return;
-        }
+        if (shown) return;
         const t = window.setTimeout(() => setMounted(false), 200);
         return () => window.clearTimeout(t);
     }, [shown]);
 
     return (
         <div
-            ref={hostRef}
+            ref={attachHost}
             data-sidebar-peek=""
             className={cn(
                 "fixed z-30 flex w-82 flex-col overflow-visible transition-opacity duration-200 ease-[var(--ease-out)]",
@@ -83,12 +83,12 @@ function SidebarPeek({
         >
             <div className="h-titlebar w-10 shrink-0" aria-hidden />
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden squircle-2xl border border-border-subtle bg-sidebar shadow-md/40">
-                {mounted && host ? (
+                {(shown || mounted) && host ? (
                     <OverlayRootProvider value={host}>
                         <ChatList
                             onNewChat={() => {
-                                window.dispatchEvent(new Event("shape-chat-new"));
-                                window.dispatchEvent(new Event("shape-chat-focus-input"));
+                                window.dispatchEvent(new Event("bettershape-chat-new"));
+                                window.dispatchEvent(new Event("bettershape-chat-focus-input"));
                             }}
                         />
                     </OverlayRootProvider>
@@ -106,6 +106,7 @@ export function AgentLayout({ children }: { children: React.ReactNode }) {
     const { project_path, active_file } = useProjectState();
     const [sidebarOpen, setSidebarOpen] = useState(true);
     const [workspaceOpen, setWorkspaceOpen] = useState(true);
+    const [zenMode, setZenMode] = useState(false);
     const [overlay, setOverlay] = useState<AgentOverlay>(null);
     const [workspaceWidth, setWorkspaceWidth] = useState(560);
     const [workspaceFits, setWorkspaceFits] = useState(true);
@@ -120,13 +121,14 @@ export function AgentLayout({ children }: { children: React.ReactNode }) {
 
     useEffect(() => {
         try {
-            const w = Number(localStorage.getItem("shape-agent-workspace-width"));
+            const w = Number(localStorage.getItem("bettershape-agent-workspace-width"));
             if (w >= MIN_WORKSPACE && w <= MAX_WORKSPACE_PX) {
                 setWorkspaceWidth(w);
                 widthRef.current = w;
             }
-            setWorkspaceOpen(localStorage.getItem("shape-agent-workspace") !== "false");
-            setSidebarOpen(localStorage.getItem("shape-agent-sidebar") !== "false");
+            setWorkspaceOpen(localStorage.getItem("bettershape-agent-workspace") !== "false");
+            setSidebarOpen(localStorage.getItem("bettershape-agent-sidebar") !== "false");
+            setZenMode(localStorage.getItem(ZEN_KEY) === "1");
             if (sessionStorage.getItem(SPLASH_KEY) !== "1") {
                 setSplash(true);
             }
@@ -192,7 +194,7 @@ export function AgentLayout({ children }: { children: React.ReactNode }) {
     const persistWorkspace = useCallback((next: boolean) => {
         setWorkspaceOpen(next);
         try {
-            localStorage.setItem("shape-agent-workspace", String(next));
+            localStorage.setItem("bettershape-agent-workspace", String(next));
         } catch {
             /* ignore */
         }
@@ -220,7 +222,7 @@ export function AgentLayout({ children }: { children: React.ReactNode }) {
         setOverlay(null);
         persistWorkspace(true);
         window.dispatchEvent(
-            new CustomEvent("shape-open-workspace-file", { detail: { path: active_file } }),
+            new CustomEvent("bettershape-open-workspace-file", { detail: { path: active_file } }),
         );
     }, [active_file, persistWorkspace]);
 
@@ -237,11 +239,11 @@ export function AgentLayout({ children }: { children: React.ReactNode }) {
             setOverlay(null);
             persistWorkspace(true);
         };
-        window.addEventListener("shape-center-view", onView as EventListener);
-        window.addEventListener("shape-open-file-diff", onFileDiff as EventListener);
+        window.addEventListener("bettershape-center-view", onView as EventListener);
+        window.addEventListener("bettershape-open-file-diff", onFileDiff as EventListener);
         return () => {
-            window.removeEventListener("shape-center-view", onView as EventListener);
-            window.removeEventListener("shape-open-file-diff", onFileDiff as EventListener);
+            window.removeEventListener("bettershape-center-view", onView as EventListener);
+            window.removeEventListener("bettershape-open-file-diff", onFileDiff as EventListener);
         };
     }, [persistWorkspace]);
 
@@ -250,7 +252,7 @@ export function AgentLayout({ children }: { children: React.ReactNode }) {
         setSidebarOpen((prev) => {
             const next = !prev;
             try {
-                localStorage.setItem("shape-agent-sidebar", String(next));
+                localStorage.setItem("bettershape-agent-sidebar", String(next));
             } catch {
                 /* ignore */
             }
@@ -274,7 +276,7 @@ export function AgentLayout({ children }: { children: React.ReactNode }) {
         setWorkspaceOpen((prev) => {
             const next = !prev;
             try {
-                localStorage.setItem("shape-agent-workspace", String(next));
+                localStorage.setItem("bettershape-agent-workspace", String(next));
             } catch {
                 /* ignore */
             }
@@ -316,7 +318,7 @@ export function AgentLayout({ children }: { children: React.ReactNode }) {
                 persistWorkspace(true);
                 window.setTimeout(() => {
                     window.dispatchEvent(
-                        new CustomEvent("shape-set-active-tab", { detail: "files" }),
+                        new CustomEvent("bettershape-set-active-tab", { detail: "files" }),
                     );
                 }, 80);
             }
@@ -333,7 +335,7 @@ export function AgentLayout({ children }: { children: React.ReactNode }) {
                 persistWorkspace(true);
                 window.setTimeout(() => {
                     window.dispatchEvent(
-                        new CustomEvent("shape-set-active-tab", { detail: "graph" }),
+                        new CustomEvent("bettershape-set-active-tab", { detail: "graph" }),
                     );
                 }, 80);
                 return;
@@ -341,7 +343,7 @@ export function AgentLayout({ children }: { children: React.ReactNode }) {
             setOverlay(detail);
             setSidebarOpen(true);
             try {
-                localStorage.setItem("shape-agent-sidebar", "true");
+                localStorage.setItem("bettershape-agent-sidebar", "true");
             } catch {
                 /* ignore */
             }
@@ -349,17 +351,17 @@ export function AgentLayout({ children }: { children: React.ReactNode }) {
         const onPrs = () => {
             setOverlay(null);
             persistWorkspace(true);
-            window.dispatchEvent(new CustomEvent("shape-set-active-tab", { detail: "prs" }));
+            window.dispatchEvent(new CustomEvent("bettershape-set-active-tab", { detail: "prs" }));
         };
-        window.addEventListener("shape-set-active-tab", onTab as EventListener);
-        window.addEventListener("shape-layout-toggle", onToggle as EventListener);
-        window.addEventListener("shape-agent-overlay", onOverlay as EventListener);
-        window.addEventListener("shape-open-pull-requests", onPrs);
+        window.addEventListener("bettershape-set-active-tab", onTab as EventListener);
+        window.addEventListener("bettershape-layout-toggle", onToggle as EventListener);
+        window.addEventListener("bettershape-agent-overlay", onOverlay as EventListener);
+        window.addEventListener("bettershape-open-pull-requests", onPrs);
         return () => {
-            window.removeEventListener("shape-set-active-tab", onTab as EventListener);
-            window.removeEventListener("shape-layout-toggle", onToggle as EventListener);
-            window.removeEventListener("shape-agent-overlay", onOverlay as EventListener);
-            window.removeEventListener("shape-open-pull-requests", onPrs);
+            window.removeEventListener("bettershape-set-active-tab", onTab as EventListener);
+            window.removeEventListener("bettershape-layout-toggle", onToggle as EventListener);
+            window.removeEventListener("bettershape-agent-overlay", onOverlay as EventListener);
+            window.removeEventListener("bettershape-open-pull-requests", onPrs);
         };
     }, [project_path, persistWorkspace, toggleSidebar, toggleWorkspace]);
 
@@ -378,7 +380,7 @@ export function AgentLayout({ children }: { children: React.ReactNode }) {
             document.body.style.cursor = "";
             document.body.style.userSelect = "";
             try {
-                localStorage.setItem("shape-agent-workspace-width", String(widthRef.current));
+                localStorage.setItem("bettershape-agent-workspace-width", String(widthRef.current));
             } catch {
                 /* ignore */
             }
@@ -449,14 +451,14 @@ export function AgentLayout({ children }: { children: React.ReactNode }) {
             if (!project_path) return;
             persistWorkspace(true);
             window.dispatchEvent(
-                new CustomEvent("shape-set-active-tab", { detail: "files" }),
+                new CustomEvent("bettershape-set-active-tab", { detail: "files" }),
             );
         };
-        window.addEventListener("shape-toggle-design-mode", onOpenFiles);
-        window.addEventListener("shape-open-browser", onOpenFiles);
+        window.addEventListener("bettershape-toggle-design-mode", onOpenFiles);
+        window.addEventListener("bettershape-open-browser", onOpenFiles);
         return () => {
-            window.removeEventListener("shape-toggle-design-mode", onOpenFiles);
-            window.removeEventListener("shape-open-browser", onOpenFiles);
+            window.removeEventListener("bettershape-toggle-design-mode", onOpenFiles);
+            window.removeEventListener("bettershape-open-browser", onOpenFiles);
         };
     }, [project_path, persistWorkspace]);
 
@@ -464,7 +466,7 @@ export function AgentLayout({ children }: { children: React.ReactNode }) {
     const openWorkspaceTerminal = useCallback(() => {
         setOverlay(null);
         window.dispatchEvent(
-            new CustomEvent("shape-layout-toggle", { detail: { id: "terminal", value: true } }),
+            new CustomEvent("bettershape-layout-toggle", { detail: { id: "terminal", value: true } }),
         );
     }, []);
 
@@ -476,23 +478,63 @@ export function AgentLayout({ children }: { children: React.ReactNode }) {
                 openWorkspaceTerminal();
             }
         };
-        window.addEventListener("shape-open-workspace-terminal", onOpenTerminal);
-        window.addEventListener("shape-terminal-shortcut", onShortcut as EventListener);
+        window.addEventListener("bettershape-open-workspace-terminal", onOpenTerminal);
+        window.addEventListener("bettershape-terminal-shortcut", onShortcut as EventListener);
         return () => {
-            window.removeEventListener("shape-open-workspace-terminal", onOpenTerminal);
-            window.removeEventListener("shape-terminal-shortcut", onShortcut as EventListener);
+            window.removeEventListener("bettershape-open-workspace-terminal", onOpenTerminal);
+            window.removeEventListener("bettershape-terminal-shortcut", onShortcut as EventListener);
         };
     }, [openWorkspaceTerminal]);
 
+    useEffect(() => {
+        // Window ▸ Reset Layout: back to the default panes, widths and no zen.
+        const onReset = () => {
+            setZenMode(false);
+            setWorkspaceWidth(560);
+            widthRef.current = 560;
+            setWorkspaceFits(true);
+            persistWorkspace(true);
+            setSidebarOpen(true);
+            try {
+                localStorage.setItem(ZEN_KEY, "0");
+                localStorage.setItem("bettershape-agent-sidebar", "true");
+                localStorage.removeItem("bettershape-agent-workspace-width");
+            } catch {
+                /* ignore */
+            }
+        };
+        window.addEventListener("bettershape-layout-reset", onReset);
+        return () => window.removeEventListener("bettershape-layout-reset", onReset);
+    }, [persistWorkspace]);
+
+    useEffect(() => {
+        const onZen = () => {
+            setZenMode((prev) => {
+                const next = !prev;
+                try {
+                    localStorage.setItem(ZEN_KEY, next ? "1" : "0");
+                } catch {
+                    /* ignore */
+                }
+                return next;
+            });
+        };
+        window.addEventListener("bettershape-toggle-zen-mode", onZen);
+        return () => window.removeEventListener("bettershape-toggle-zen-mode", onZen);
+    }, []);
+
     const overlayOpen = overlay != null;
     const showWorkspace = Boolean(project_path) && !overlayOpen;
-    const rightExpanded = workspaceOpen && showWorkspace && workspaceFits;
+    // Zen mode hides the side panes without touching the persisted layout prefs.
+    const rightExpanded = workspaceOpen && showWorkspace && workspaceFits && !zenMode;
+    const sidebarShown = sidebarOpen && !zenMode;
     const { isMaximized, minimize, toggleMaximize, close } = useWindowControls();
 
     return (
         <div className="relative flex h-full min-h-0 w-full overflow-hidden bg-sidebar">
             <DevRunHost />
             <ProjectQuickPickHost />
+            <NewFilePromptHost />
             {splash ? (
                 <div
                     className={cn(
@@ -504,7 +546,7 @@ export function AgentLayout({ children }: { children: React.ReactNode }) {
                 >
                     <Image
                         src="/logos/logo.svg"
-                        alt="Shape"
+                        alt="BetterShape"
                         width={52}
                         height={64}
                         priority
@@ -519,18 +561,18 @@ export function AgentLayout({ children }: { children: React.ReactNode }) {
 
             <AgentSidebar
                 expanded
-                open={sidebarOpen}
+                open={sidebarShown}
                 overlay={overlay}
                 onToggleSidebar={toggleSidebar}
                 onSearch={() => {
                     window.dispatchEvent(
-                        new CustomEvent("shape-command-palette", {
+                        new CustomEvent("bettershape-command-palette", {
                             detail: { placeholder: "Search…" },
                         }),
                     );
                 }}
             />
-            {sidebarOpen ? null : (
+            {sidebarShown ? null : (
                 <SidebarPeek shown={sidebarFlyout} onEnter={openSidebarFlyout} onLeave={closeSidebarFlyout} />
             )}
 

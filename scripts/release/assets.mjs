@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 /**
  * After `tauri build`, produce clean Windows release asset names:
- *   Shape-<arch>-setup.exe  (NSIS installer)
- *   Shape-<arch>.zip        (portable: exe + sidecar files)
+ *   BetterShape-<arch>-setup.exe  (NSIS installer)
+ *   BetterShape-<arch>.zip        (portable: exe + sidecar files)
  *
  * Usage (from repo root, after a Windows build):
  *   node scripts/release/assets.mjs --arch x86_64
  *   node scripts/release/assets.mjs --arch aarch64 --out-dir dist/release
  */
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import {
     copyFileSync,
     existsSync,
@@ -58,7 +58,7 @@ function findNsisSetup(releaseDir) {
 
 function findReleaseExe(releaseDir) {
     if (!existsSync(releaseDir)) return null;
-    const preferred = join(releaseDir, "Shape.exe");
+    const preferred = join(releaseDir, "BetterShape.exe");
     if (existsSync(preferred)) return preferred;
     const exes = readdirSync(releaseDir).filter(
         (f) => f.endsWith(".exe") && !f.includes("uninstall"),
@@ -88,7 +88,8 @@ function zipWindows(paths, outZip) {
     if (existsSync(outZip)) rmSync(outZip);
     const list = paths.map((p) => `'${p.replace(/'/g, "''")}'`).join(", ");
     const ps = `Compress-Archive -Path @(${list}) -DestinationPath '${outZip.replace(/'/g, "''")}' -Force`;
-    execSync(`powershell -NoProfile -Command "${ps}"`, { stdio: "inherit" });
+    // Arguments are passed straight to PowerShell: no shell parses these paths.
+    execFileSync("powershell", ["-NoProfile", "-Command", ps], { stdio: "inherit" });
 }
 
 function main() {
@@ -103,7 +104,7 @@ function main() {
         process.exit(1);
     }
 
-    const setupDest = join(outDir, `Shape-${arch}-setup.exe`);
+    const setupDest = join(outDir, `BetterShape-${arch}-setup.exe`);
     copyFileSync(setupSrc, setupDest);
     console.log(`Wrote ${setupDest}`);
 
@@ -119,13 +120,13 @@ function main() {
 
     const exe = findReleaseExe(releaseDir);
     if (!exe) {
-        console.error(`Release Shape.exe not found under ${releaseDir}`);
+        console.error(`Release BetterShape.exe not found under ${releaseDir}`);
         process.exit(1);
     }
 
     const mainName = exe.split(/[\\/]/).pop();
     const zipPaths = [exe, ...portableSidecars(releaseDir, mainName)];
-    const zipDest = join(outDir, `Shape-${arch}.zip`);
+    const zipDest = join(outDir, `BetterShape-${arch}.zip`);
     zipWindows(zipPaths, zipDest);
     console.log(`Wrote ${zipDest} (${zipPaths.length} entries)`);
 }

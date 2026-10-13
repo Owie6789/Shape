@@ -9,7 +9,7 @@ import { DataTrending20Regular } from "@fluentui/react-icons/headless/svg/data-t
 import React, { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { getShapeSyntaxTheme } from "@/lib/ui/syntax-theme";
+import { getBetterShapeSyntaxTheme } from "@/lib/ui/syntax-theme";
 import { FileIcon } from "@/components/ui/file-icon";
 import { openProjectFile } from "@/lib/window/open-project-file";
 import { Icon } from "@/components/ui/icon";
@@ -120,7 +120,7 @@ function CodeBlock({ language, code, ...rest }: { language: string; code: string
                 </Button>
             </div>
             <SyntaxHighlighter
-                    style={getShapeSyntaxTheme()}
+                    style={getBetterShapeSyntaxTheme()}
                     language={language}
                     PreTag="div"
                     customStyle={{ margin: 0, padding: "0 0.75rem 0.75rem", background: "transparent" }}

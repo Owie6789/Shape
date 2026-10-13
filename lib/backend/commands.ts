@@ -1,5 +1,5 @@
 ﻿import { invoke } from "@tauri-apps/api/core";
-import { ActivityTotals, BrowserHistoryEntry, BrowserInputEvent, BrowserPickedElement, BrowserTab, BrowserTabsPayload, ChatGenerationState, ChatMessage, CodebaseSearchHit, ContentSearchResult, Conversation, EslintLintResult, FileEntry, FileInfo, FileSearchResult, GitActivityPoint, GitFileParams, GitRepoInfo, GitHubAuthLoginResult, GitHubAuthStatus, GitLogEntry, GitSyncStatus, GitStashEntry, BlameLine, HistoryEntry, IndexStatus, McpServerConfig, McpStatusEntry, McpToolInfo, PackageInfo, OutlineResponse, ProjectState, ProjectStatsSnapshot, ReplaceResult, SearchOptions, TestDiscoveryResult, TestRunSummaryResult, ContentMatch } from "@/lib/backend/types";
+import { ActivityTotals, BrowserHistoryEntry, BrowserInputEvent, BrowserPickedElement, BrowserTab, BrowserTabsPayload, ChatGenerationState, ChatMessage, CodebaseSearchHit, CompactResult, CompactionStateView, ContentSearchResult, Conversation, EslintLintResult, FileEntry, FileInfo, FileSearchResult, GitActivityPoint, GitFileParams, GitRepoInfo, GitHubAuthLoginResult, GitHubAuthStatus, GitLogEntry, GitSyncStatus, GitStashEntry, BlameLine, HistoryEntry, IndexStatus, McpRegistryEntry, McpServerConfig, McpStatusEntry, McpToolInfo, PackageInfo, OutlineResponse, ProjectState, ProjectStatsSnapshot, ReplaceResult, SearchOptions, TestDiscoveryResult, TestRunSummaryResult, ContentMatch } from "@/lib/backend/types";
 
 type InvokeLogger = (command: string, durationMs: number) => void;
 
@@ -61,8 +61,13 @@ export const commands = {
     invalidateFileCache: (path: string) => {
         fileContentCache.delete(path);
     },
+    invalidateAllFileCaches: () => {
+        fileContentCache.clear();
+        gitCache.clear();
+    },
     getCachedFileContent: (path: string): string | undefined => fileContentCache.get(path),
     lsDir: (path: string) => invokeCommand<FileEntry[]>("ls_dir", { path }),
+    homeDir: () => invokeCommand<string | null>("home_dir"),
     createFile: (path: string) => invokeCommand("create_file", { path }),
     createDir: (path: string) => invokeCommand("create_dir", { path }),
     deletePath: (path: string) => invokeCommand("delete_path", { path }),
@@ -72,6 +77,9 @@ export const commands = {
     revealPath: (path: string) => invokeCommand("reveal_path", { path }),
     openInApp: (app: string, path: string) => invokeCommand("open_in_app", { app, path }),
     setProjectPath: (path: string | null) => invokeCommand("set_project_path", { path }),
+    setExtraWorkspaceFolders: (folders: string[]) =>
+        invokeCommand("set_extra_workspace_folders", { folders }),
+    grantIpcPath: (path: string) => invokeCommand("grant_ipc_path", { path }),
     openFile: (path: string, name: string) => invokeCommand("open_file", { path, name }),
     closeFile: (path: string) => invokeCommand("close_file", { path }),
     closeAllFiles: () => invokeCommand("close_all_files"),
@@ -100,6 +108,14 @@ export const commands = {
         rememberFileContent(path, content);
         return content;
     },
+    /** Read `path` only when it canonicalizes inside `root`. Skill scans use this. */
+    readFileWithin: async (path: string, root: string) => {
+        fileContentCache.delete(path);
+        return invokeCommand<string>("read_file_within", { path, root });
+    },
+    /** Reject a skill root whose canonical path leaves `root` (project symlink). */
+    ensurePathWithin: (path: string, root: string) =>
+        invokeCommand<void>("ensure_path_within", { path, root }),
     primeFileCache: (path: string, content: string) => {
         rememberFileContent(path, content);
     },
@@ -494,7 +510,6 @@ export const commands = {
         model?: string,
         mode?: string,
         customRules?: string,
-        accessToken?: string,
         designOptions?: {
             visualPreviews: boolean;
             multipleConcepts: boolean;
@@ -512,6 +527,7 @@ export const commands = {
             pluginApprovals?: Record<string, string>;
             pluginDisabledActions?: Record<string, string[]>;
             pluginAutoAllow?: string[];
+            customSystemPrompt?: string | null;
         },
         reasoningEffort?: string,
         serviceTier?: string | null,
@@ -521,13 +537,21 @@ export const commands = {
         /** Models subagents may use (user settings). Never inherit the parent chat model. */
         subagentModels?: string[],
         subagentDefaultModel?: string,
+        /** Standing compaction instructions (Settings → Agents). */
+        compactInstructions?: string,
+        /**
+         * The conversation this message belongs to. Always pass the chat on screen; `null`
+         * starts a new chat. The backend never guesses from its own current pointer.
+         */
+        conversationId?: string | null,
+        /** Client-generated id for this send. The backend echoes it in `chat_started`. */
+        clientRequestId?: string | null,
     ) =>
         invokeCommand<string>("send_chat_message", {
             message,
             model,
             mode,
             customRules: customRules ?? null,
-            accessToken: accessToken ?? null,
             designOptions: designOptions ?? null,
             reviewAdversarialEnabled: reviewAdversarialEnabled ?? null,
             autoRunMode: executionPolicy?.autoRunMode ?? null,
@@ -537,6 +561,7 @@ export const commands = {
             pluginApprovals: executionPolicy?.pluginApprovals ?? null,
             pluginDisabledActions: executionPolicy?.pluginDisabledActions ?? null,
             pluginAutoAllow: executionPolicy?.pluginAutoAllow ?? null,
+            customSystemPrompt: executionPolicy?.customSystemPrompt ?? null,
             reasoningEffort: reasoningEffort ?? null,
             serviceTier: serviceTier ?? null,
             displayMessage: displayMessage ?? null,
@@ -544,6 +569,9 @@ export const commands = {
             conversationKind: conversationKind ?? null,
             subagentModels: subagentModels ?? null,
             subagentDefaultModel: subagentDefaultModel ?? null,
+            compactInstructions: compactInstructions ?? null,
+            conversationId: conversationId ?? null,
+            clientRequestId: clientRequestId ?? null,
         }),
     captureHtmlPreview: (options: {
         html: string;
@@ -665,10 +693,17 @@ export const commands = {
         invokeCommand<{ changed: boolean; file: string | null; content: string | null }>(
             "redo_design_source_patch",
         ),
-    stopChatMessage: () => invokeCommand<void>("stop_chat_message"),
+    /** Stops one conversation's turn. Without an id it stops the chat that is live. */
+    stopChatMessage: (conversationId?: string | null) =>
+        invokeCommand<void>("stop_chat_message", { conversationId: conversationId ?? null }),
     getChatHistory: () => invokeCommand<ChatMessage[]>("get_chat_history"),
-    getChatGenerationState: () =>
-        invokeCommand<ChatGenerationState>("get_chat_generation_state"),
+    getChatGenerationState: (conversationId?: string | null) =>
+        invokeCommand<ChatGenerationState>("get_chat_generation_state", {
+            conversationId: conversationId ?? null,
+        }),
+    /** Messages of any one conversation by id (in-flight text included). */
+    getConversationMessages: (id: string) =>
+        invokeCommand<ChatMessage[]>("get_conversation_messages", { id }),
     getChatTitle: () => invokeCommand<string>("get_chat_title"),
     getCurrentConversationId: () => invokeCommand<string | null>("get_current_conversation_id"),
     getConversations: (projectPath?: string) => invokeCommand<Conversation[]>("get_conversations", { projectPath: projectPath ?? null }),
@@ -686,93 +721,80 @@ export const commands = {
         invokeCommand<void>("rename_conversation", { id, title }),
     applyFileEdit: (path: string, original: string, replacement: string) =>
         invokeCommand<void>("apply_file_edit", { path, original, replacement }),
-    generateCommitMessage: (accessToken?: string, repoPath?: string | null) =>
+    generateCommitMessage: (repoPath?: string | null) =>
         invokeCommand<string>("generate_commit_message", {
-            accessToken: accessToken ?? null,
             repoPath: repoPath ?? null,
         }),
-    rewriteOpenFile: (accessToken: string, path: string, instruction: string) =>
-        invokeCommand<string>("rewrite_open_file", { accessToken, path, instruction }),
-    rewriteText: (accessToken: string, prompt: string) =>
-        invokeCommand<string>("rewrite_text", { accessToken, prompt }),
+    rewriteOpenFile: (path: string, instruction: string) =>
+        invokeCommand<string>("rewrite_open_file", { path, instruction }),
+    rewriteText: (prompt: string) =>
+        invokeCommand<string>("rewrite_text", { prompt }),
     walkthroughPullRequest: (
         owner: string,
         repo: string,
         number: number,
-        accessToken?: string,
-    ) =>
+        ) =>
         invokeCommand<string>("walkthrough_pull_request", {
             owner,
             repo,
             number,
-            accessToken: accessToken ?? null,
         }),
     summarizePullRequest: (
         owner: string,
         repo: string,
         number: number,
-        accessToken?: string,
-    ) =>
+        ) =>
         invokeCommand<string>("summarize_pull_request", {
             owner,
             repo,
             number,
-            accessToken: accessToken ?? null,
         }),
     reviewPullRequest: (
         owner: string,
         repo: string,
         number: number,
-        accessToken?: string,
-    ) =>
+        ) =>
         invokeCommand<string>("review_pull_request", {
             owner,
             repo,
             number,
-            accessToken: accessToken ?? null,
         }),
     draftPullRequest: (
         base: string,
         compare: string,
-        opts?: { repoPath?: string | null; accessToken?: string },
+        opts?: { repoPath?: string | null },
     ) =>
         invokeCommand<string>("draft_pull_request", {
             base,
             compare,
             repoPath: opts?.repoPath ?? null,
-            accessToken: opts?.accessToken ?? null,
         }),
     summarizeIssue: (
         owner: string,
         repo: string,
         number: number,
-        accessToken?: string,
-    ) =>
+        ) =>
         invokeCommand<string>("summarize_issue", {
             owner,
             repo,
             number,
-            accessToken: accessToken ?? null,
         }),
     summarizeRelease: (
         owner: string,
         repo: string,
         releaseId: number,
         mode?: "summarize" | "upgrade" | "announce",
-        accessToken?: string,
-    ) =>
+        ) =>
         invokeCommand<string>("summarize_release", {
             owner,
             repo,
             releaseId,
             mode: mode ?? null,
-            accessToken: accessToken ?? null,
         }),
-    explainCiLog: (logText: string, context?: string | null, accessToken?: string) =>
+    explainCiLog: (logText: string, context?: string | null) =>
         invokeCommand<string>("explain_ci_log", {
             logText,
             context: context ?? null,
-            accessToken: accessToken ?? null,
         }),
     explainGitChanges: (
         kind: "commit" | "working" | "branch" | "conflict",
@@ -781,8 +803,7 @@ export const commands = {
             base?: string | null;
             compare?: string | null;
             repoPath?: string | null;
-            accessToken?: string;
-        },
+            },
     ) =>
         invokeCommand<string>("explain_git_changes", {
             kind,
@@ -790,14 +811,110 @@ export const commands = {
             base: opts?.base ?? null,
             compare: opts?.compare ?? null,
             repoPath: opts?.repoPath ?? null,
-            accessToken: opts?.accessToken ?? null,
         }),
     restoreCheckpoint: (index: number) => invokeCommand<void>("restore_checkpoint", { index }),
+    // BYOK provider configuration
+    setAiConfig: (config: {
+        providers: {
+            id: string;
+            kind: string;
+            label: string;
+            apiKey: string;
+            baseUrl: string;
+            models: string[];
+            enabled: boolean;
+            /** Endpoint answers without a key (local runtime, free tier). */
+            keyless: boolean;
+            /** Extra request headers, preset defaults already merged in. */
+            headers: Record<string, string>;
+            /** `bearer` | `api-key` | `x-api-key` | `x-goog-api-key` | `none`. */
+            authStyle: string;
+        }[];
+        defaultModel: string;
+        embeddingModel: string;
+        search: { provider: string; apiKey: string };
+        composio: { apiKey: string; userId: string };
+    }) => invokeCommand<void>("set_ai_config", { config }),
+    getAiConfig: () =>
+        invokeCommand<{
+            providers: {
+            id: string;
+            kind: string;
+            label: string;
+            apiKey: string;
+            baseUrl: string;
+            models: string[];
+            enabled: boolean;
+            /** Endpoint answers without a key (local runtime, free tier). */
+            keyless: boolean;
+            /** Extra request headers, preset defaults already merged in. */
+            headers: Record<string, string>;
+            /** `bearer` | `api-key` | `x-api-key` | `x-goog-api-key` | `none`. */
+            authStyle: string;
+        }[];
+            defaultModel: string;
+            embeddingModel: string;
+            search: { provider: string; apiKey: string };
+            composio: { apiKey: string; userId: string };
+        }>("get_ai_config"),
+    aiProviderStatus: () => invokeCommand<string[]>("ai_provider_status"),
+    /** Probe one provider: key validity, base URL, and the models it serves. */
+    aiTestProvider: (providerId: string, kind?: string, apiKey?: string, baseUrl?: string) =>
+        invokeCommand<{
+            ok: boolean;
+            status: number;
+            message: string;
+            models: string[];
+            latencyMs: number;
+        }>("ai_test_provider", {
+            providerId,
+            kind: kind ?? null,
+            apiKey: apiKey ?? null,
+            baseUrl: baseUrl ?? null,
+        }),
+    /**
+     * Send one tiny completion through the same wire the agent uses, to prove a
+     * connection can actually answer (not just list models).
+     */
+    aiCheckProvider: (
+        providerId: string,
+        opts?: {
+            kind?: string;
+            apiKey?: string;
+            baseUrl?: string;
+            model?: string;
+            headers?: Record<string, string>;
+            authStyle?: string;
+        },
+    ) =>
+        invokeCommand<{
+            ok: boolean;
+            status: number;
+            message: string;
+            models: string[];
+            latencyMs: number;
+        }>("ai_check_provider", {
+            providerId,
+            kind: opts?.kind ?? null,
+            apiKey: opts?.apiKey ?? null,
+            baseUrl: opts?.baseUrl ?? null,
+            model: opts?.model ?? null,
+            headers: opts?.headers ?? null,
+            authStyle: opts?.authStyle ?? null,
+        }),
+    /** True when this machine has a usable OS keychain for provider keys. */
+    aiVaultSupported: () => invokeCommand<boolean>("ai_vault_supported"),
+    /** Store (or clear, with an empty key) one provider secret in the keychain. */
+    aiStoreKey: (providerId: string, apiKey: string) =>
+        invokeCommand<void>("ai_store_key", { providerId, apiKey }),
+    aiDeleteKey: (providerId: string) => invokeCommand<void>("ai_delete_key", { providerId }),
+    /** Read back stored secrets for the given ids (missing entries are omitted). */
+    aiLoadKeys: (providerIds: string[]) =>
+        invokeCommand<{ id: string; apiKey: string }[]>("ai_load_keys", { providerIds }),
     // Codebase index
-    indexProject: (projectPath?: string, accessToken?: string) =>
+    indexProject: (projectPath?: string) =>
         invokeCommand<boolean>("index_project", {
             projectPath: projectPath ?? null,
-            accessToken: accessToken ?? null,
         }),
     searchCodebase: (query: string, topK?: number, projectPath?: string) =>
         invokeCommand<CodebaseSearchHit[]>("search_codebase", {
@@ -823,6 +940,33 @@ export const commands = {
     mcpClearOAuth: (id: string) => invokeCommand<void>("mcp_clear_oauth", { id }),
     callMcpTool: (qualifiedName: string, args: Record<string, unknown>) =>
         invokeCommand<string>("call_mcp_tool", { qualifiedName, arguments: args }),
+    /** Agent-equivalent server management: same code path `mcp_manage` uses. */
+    mcpManageServers: (request: {
+        action: "list" | "add" | "update" | "remove" | "enable" | "disable" | "restart" | "test";
+        id?: string;
+        server?: McpServerConfig;
+        enabled?: boolean;
+    }) => invokeCommand<Record<string, unknown>>("mcp_manage_servers", { request }),
+    /** Re-read mcp.json and reconnect. Merges with Settings-sourced servers. */
+    mcpReloadFromFile: () => invokeCommand<McpStatusEntry[]>("mcp_reload_from_file"),
+    /** Search the official MCP registry (same client the agent uses). */
+    mcpRegistrySearch: (query: string, limit?: number) =>
+        invokeCommand<McpRegistryEntry[]>("mcp_registry_search", { query, limit: limit ?? 20 }),
+    /** Install a registry entry into mcp.json through the validated write path. */
+    mcpRegistryInstall: (entry: McpRegistryEntry, replace?: boolean) =>
+        invokeCommand<{ server: McpServerConfig; status: McpStatusEntry; replaced: boolean }>(
+            "mcp_registry_install",
+            { entry, replace: replace ?? false },
+        ),
+    // Context compaction
+    compactChat: (opts?: { focus?: string; instructions?: string; model?: string }) =>
+        invokeCommand<CompactResult>("compact_chat", {
+            focus: opts?.focus ?? null,
+            instructions: opts?.instructions ?? null,
+            model: opts?.model ?? null,
+        }),
+    resetCompaction: () => invokeCommand<void>("reset_compaction"),
+    getCompactionState: () => invokeCommand<CompactionStateView>("get_compaction_state"),
     // Terminal command approval
     approveTerminalCommand: (id: string) => invokeCommand<string>("approve_terminal_command", { id }),
     rejectTerminalCommand: (id: string) => invokeCommand<void>("reject_terminal_command", { id }),
@@ -835,7 +979,7 @@ export const commands = {
         invokeCommand<void>("select_design_preview", {
             id,
             skipped: skipped ?? false,
-            ...(conceptId ? { concept_id: conceptId } : {}),
+            ...(conceptId ? { conceptId } : {}),
             ...(tweaks ? { tweaks } : {}),
         }),
     forkConversation: (messageIndex: number) =>
@@ -918,7 +1062,6 @@ export const commands = {
             gitRef,
             inputsJson: inputsJson ?? null,
         }),
-    getDeviceId: () => invokeCommand<string>("get_device_id"),
     setWorkspaceTrusted: (path: string, trusted: boolean) =>
         invokeCommand<void>("set_workspace_trusted", { path, trusted }),
     isWorkspaceTrusted: (path: string) =>

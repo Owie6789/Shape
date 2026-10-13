@@ -45,9 +45,9 @@ next-env.d.ts
 
 # Shape
 .shape/
+.bettershape/
 
-# Local agent guidance (not published)
-AGENTS.md
+# Local commit wording (not published)
 COMMIT.md
 
 # Updater signing private key (never commit)

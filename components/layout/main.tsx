@@ -10,28 +10,60 @@ import { saveLastProject, loadLastProject } from "@/lib/workspace/last-project";
 import { clearClosedTabs } from "@/lib/workspace/closed-tabs";
 import { isMainTauriWindow, isTauriRuntime } from "@/lib/window/tauri-window";
 
+/** Native menu / global-shortcut actions that never reach a JS keydown handler. */
 function TauriShortcutBridge() {
     useEffect(() => {
-        let unlistenFind: (() => void) | undefined;
-        let unlistenReplace: (() => void) | undefined;
-        let unlistenSaveAll: (() => void) | undefined;
+        let disposed = false;
+        const unlisteners: Array<() => void> = [];
 
         void import("@tauri-apps/api/event").then(({ listen }) => {
-            void listen("open-find-in-files", () => {
+            const register = (event: string, handler: (payload: unknown) => void) => {
+                void listen(event, (e) => handler(e.payload)).then((fn) => {
+                    // Unmount can win the race against `listen`; never leak the listener.
+                    if (disposed) fn();
+                    else unlisteners.push(fn);
+                });
+            };
+            register("open-find-in-files", () => {
                 dispatchShortcutAction("Find in Files", "Ctrl+Shift+F");
-            }).then((fn) => { unlistenFind = fn; });
-            void listen("open-replace-in-files", () => {
+            });
+            register("open-replace-in-files", () => {
                 dispatchShortcutAction("Replace in Files", "Ctrl+H");
-            }).then((fn) => { unlistenReplace = fn; });
-            void listen("save-all-request", () => {
+            });
+            register("save-all-request", () => {
                 window.dispatchEvent(new Event("save-all-request"));
-            }).then((fn) => { unlistenSaveAll = fn; });
+            });
+            // File menu / Ctrl+S, Ctrl+O, Ctrl+N from the native menu.
+            register("save-request", () => {
+                window.dispatchEvent(new Event("save-request"));
+            });
+            register("open-file-request", () => {
+                window.dispatchEvent(new Event("open-file-request"));
+            });
+            register("new-file", () => {
+                window.dispatchEvent(new CustomEvent("bettershape-explorer-create", { detail: { type: "file" } }));
+            });
+            // F12 / Alt+Shift+F — the backend forwards the raw accelerator.
+            register("editor-shortcut", (payload) => {
+                const key = typeof payload === "string" ? payload : "";
+                const action = key === "F12" ? "definition" : key === "Alt+Shift+F" ? "format" : "";
+                if (!action) return;
+                window.dispatchEvent(new CustomEvent("bettershape-editor-action", { detail: { action } }));
+            });
+            register("toggle-zen-mode", () => {
+                window.dispatchEvent(new Event("bettershape-toggle-zen-mode"));
+            });
+            // Ctrl+E / Recent Files from the native menu.
+            register("bettershape-command-palette", (payload) => {
+                const detail = payload && typeof payload === "object" ? payload : { mode: "files" };
+                window.dispatchEvent(new CustomEvent("bettershape-command-palette", { detail }));
+            });
         });
 
         return () => {
-            unlistenFind?.();
-            unlistenReplace?.();
-            unlistenSaveAll?.();
+            disposed = true;
+            for (const fn of unlisteners) fn();
+            unlisteners.length = 0;
         };
     }, []);
 
@@ -53,8 +85,8 @@ function ProjectOpenHost() {
             const custom = e as CustomEvent<{ path: string }>;
             if (custom.detail?.path) void openProject(custom.detail.path);
         };
-        window.addEventListener("shape-open-project", handleEvent);
-        return () => window.removeEventListener("shape-open-project", handleEvent);
+        window.addEventListener("bettershape-open-project", handleEvent);
+        return () => window.removeEventListener("bettershape-open-project", handleEvent);
     }, []);
 
     useEffect(() => {
@@ -69,7 +101,7 @@ function ProjectOpenHost() {
                 if (fresh || cancelled) return;
                 const last = loadLastProject();
                 if (!last || cancelled) return;
-                await openProject(last);
+                await openProject(last, { promptTrust: false });
             } catch {
                 /* ignore */
             }
@@ -94,19 +126,20 @@ export default function Main({ children }: { children: React.ReactNode }) {
             const selected = await open({ directory: false, multiple: false });
             if (typeof selected === "string") {
                 const name = selected.split(/[\\/]/).pop() || selected;
+                await commands.grantIpcPath(selected).catch(() => undefined);
                 await commands.openFile(selected, name);
             }
         };
         const handleOpenFolderRequest = () => {
-            window.dispatchEvent(new Event("shape-open-project-pick"));
+            window.dispatchEvent(new Event("bettershape-open-project-pick"));
         };
 
-        window.addEventListener("shape-open-settings", handleOpenSettings);
+        window.addEventListener("bettershape-open-settings", handleOpenSettings);
         window.addEventListener("open-file-request", handleOpenFileRequest);
         window.addEventListener("open-folder-request", handleOpenFolderRequest);
 
         return () => {
-            window.removeEventListener("shape-open-settings", handleOpenSettings);
+            window.removeEventListener("bettershape-open-settings", handleOpenSettings);
             window.removeEventListener("open-file-request", handleOpenFileRequest);
             window.removeEventListener("open-folder-request", handleOpenFolderRequest);
         };

@@ -21,6 +21,7 @@ export function isIncognitoChat(): boolean {
 }
 
 export async function setIncognitoChat(enabled: boolean): Promise<void> {
+    const previous = active;
     active = enabled;
     emit();
     try {
@@ -30,11 +31,16 @@ export async function setIncognitoChat(enabled: boolean): Promise<void> {
             if (id) await purgeIncognitoConversation(id);
         }
     } catch {
-        /* ignore */
+        // The backend refused the change: roll the flag back rather than
+        // showing an incognito chat the backend does not know about.
+        if (active !== previous) {
+            active = previous;
+            emit();
+        }
+        return;
     }
-    window.dispatchEvent(
-        new CustomEvent("shape-chat-incognito", { detail: { enabled } }),
-    );
+    // `subscribeIncognito` is the channel the UI uses; the event was never
+    // listened for, so it is gone rather than pretending to be an interface.
 }
 
 export async function syncIncognitoFromBackend(): Promise<void> {

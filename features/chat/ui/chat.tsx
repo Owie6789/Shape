@@ -46,7 +46,9 @@ export default function Chat({
     sidebarSide?: "left" | "right";
     embedWindowControls?: React.ReactNode;
 }) {
-    const session = useChatSession();
+    const messagesEndRef = React.useRef<HTMLDivElement>(null);
+    const scrollContainerRef = React.useRef<HTMLDivElement>(null);
+    const session = useChatSession(messagesEndRef, scrollContainerRef);
     const activeSubagent = React.useSyncExternalStore(subscribeSubagents, getActiveSubagent, getActiveSubagent);
 
     React.useEffect(() => {
@@ -54,20 +56,26 @@ export default function Chat({
         return () => setSubagentParentConversation(null);
     }, [session.conversationId]);
 
+    // Listeners read the latest session through a ref, so they are registered once.
+    const sessionRef = React.useRef(session);
+    React.useLayoutEffect(() => {
+        sessionRef.current = session;
+    });
+
     React.useEffect(() => {
         const onOpen = (e: Event) => {
             const detail = (e as CustomEvent<{ id?: string; parentId?: string }>).detail;
-            if (detail?.parentId && detail.parentId !== session.conversationId) {
-                void session.handleSelectChatTab(detail.parentId);
+            if (detail?.parentId && detail.parentId !== sessionRef.current.conversationId) {
+                void sessionRef.current.handleSelectChatTab(detail.parentId);
             }
             if (detail?.id) openSubagent(detail.id);
         };
         const onOpenForParent = (e: Event) => {
             const parentId = (e as CustomEvent<{ parentId?: string }>).detail?.parentId;
-            if (parentId && parentId !== session.conversationId && parentId !== session.activeChatTabId) {
-                void session.handleSelectChatTab(parentId);
+            if (parentId && parentId !== sessionRef.current.conversationId && parentId !== sessionRef.current.activeChatTabId) {
+                void sessionRef.current.handleSelectChatTab(parentId);
             }
-            const fromMessages = session.messages
+            const fromMessages = sessionRef.current.messages
                 .map((m) => extractSubagentsFromText(m.content || "", parentId))
                 .flat();
             const first = fromMessages[0];
@@ -90,13 +98,23 @@ export default function Chat({
                 : getSubagents()[0];
             if (liveFirst) openSubagent(liveFirst.id);
         };
-        window.addEventListener("shape-open-subagent", onOpen as EventListener);
-        window.addEventListener("shape-open-subagents-for", onOpenForParent as EventListener);
-        return () => {
-            window.removeEventListener("shape-open-subagent", onOpen as EventListener);
-            window.removeEventListener("shape-open-subagents-for", onOpenForParent as EventListener);
+        // Sidebar delete/archive closes the matching tab here; the shell owns tabs.
+        const onCloseTab = (e: Event) => {
+            const id = (e as CustomEvent<{ id?: string }>).detail?.id;
+            if (!id) return;
+            if (!sessionRef.current.openChatTabs.some((tab) => tab.id === id)) return;
+            void sessionRef.current.handleCloseChatTab(id);
         };
-    }, [session.conversationId, session.handleSelectChatTab, session.messages]);
+        window.addEventListener("bettershape-open-subagent", onOpen as EventListener);
+        window.addEventListener("bettershape-open-subagents-for", onOpenForParent as EventListener);
+        window.addEventListener("bettershape-chat-close-tab", onCloseTab as EventListener);
+        return () => {
+            window.removeEventListener("bettershape-open-subagent", onOpen as EventListener);
+            window.removeEventListener("bettershape-open-subagents-for", onOpenForParent as EventListener);
+            window.removeEventListener("bettershape-chat-close-tab", onCloseTab as EventListener);
+        };
+    }, []);
+
     useSyncChatGenerating(session.conversationId ?? session.activeChatTabId, session.isLoading);
     const [tabsSlot, setTabsSlot] = React.useState<HTMLElement | null>(null);
     React.useEffect(() => {
@@ -137,9 +155,12 @@ export default function Chat({
     }, [session.messages, session.isLoading]);
 
     const newChatRef = React.useRef(session.handleNewChat);
-    newChatRef.current = session.handleNewChat;
     const restoreRef = React.useRef(session.handleRestore);
-    restoreRef.current = session.handleRestore;
+    // Refs are updated after commit (layout phase), not during render.
+    React.useLayoutEffect(() => {
+        newChatRef.current = session.handleNewChat;
+        restoreRef.current = session.handleRestore;
+    });
 
     React.useEffect(() => {
         const onNewChat = () => {
@@ -154,20 +175,21 @@ export default function Chat({
                 }
             }
         };
-        window.addEventListener("shape-chat-new", onNewChat);
-        window.addEventListener("shape-chat-restore-last", onRestoreLast);
+        window.addEventListener("bettershape-chat-new", onNewChat);
+        window.addEventListener("bettershape-chat-restore-last", onRestoreLast);
         return () => {
-            window.removeEventListener("shape-chat-new", onNewChat);
-            window.removeEventListener("shape-chat-restore-last", onRestoreLast);
+            window.removeEventListener("bettershape-chat-new", onNewChat);
+            window.removeEventListener("bettershape-chat-restore-last", onRestoreLast);
         };
     }, [session.messages]);
 
     const extractedSubagents = useMemo(() => {
         const parentId = session.conversationId ?? session.activeChatTabId ?? undefined;
-        const seen = new Map<string, { id: string; title: string; task?: string; model?: string; transcript?: string; status: "pending" | "running" | "done" | "error" }>();
+        // A subagent is stamped with the time of the message that mentions it (no clock read in render).
+        const seen = new Map<string, ReturnType<typeof extractSubagentsFromText>[number] & { updatedAt: number }>();
         for (const m of session.messages) {
             for (const item of extractSubagentsFromText(m.content || "", parentId)) {
-                seen.set(item.id, item);
+                seen.set(item.id, { ...item, updatedAt: m.timestamp });
             }
         }
         return [...seen.values()].map((item) => ({
@@ -179,7 +201,7 @@ export default function Chat({
             transcript: item.transcript,
             status: item.status,
             parentId,
-            updatedAt: Date.now(),
+            updatedAt: item.updatedAt,
         }));
     }, [session.messages, session.conversationId, session.activeChatTabId]);
 
@@ -219,9 +241,9 @@ export default function Chat({
 
     const turnCount = session.messageGroups.length;
     const [activeTurn, selectTurn] = useChatTurnActive(
-        session.scrollContainerRef,
+        scrollContainerRef,
         turnCount,
-        { streaming: session.isLoading },
+        { streaming: session.isLoading, rootKey: activeSubagent?.id ?? null },
     );
 
     const isEmpty = session.messages.length === 0;
@@ -229,13 +251,11 @@ export default function Chat({
     const emptyStageRef = React.useRef<HTMLDivElement>(null);
     const emptyStackRef = React.useRef<HTMLDivElement>(null);
     const [emptyTop, setEmptyTop] = React.useState(0);
-    const emptyTopMotion = React.useRef(false);
+    // The slide-in transition is enabled one frame after the empty stage is laid out.
+    const [emptyTopMotion, setEmptyTopMotion] = React.useState(false);
 
     React.useLayoutEffect(() => {
-        if (!emptyStage) {
-            emptyTopMotion.current = false;
-            return;
-        }
+        if (!emptyStage) return;
         const stage = emptyStageRef.current;
         const stack = emptyStackRef.current;
         if (!stage || !stack) return;
@@ -251,11 +271,12 @@ export default function Chat({
         ro.observe(stage);
         ro.observe(stack);
         const raf = window.requestAnimationFrame(() => {
-            emptyTopMotion.current = true;
+            setEmptyTopMotion(true);
         });
         return () => {
             ro.disconnect();
             window.cancelAnimationFrame(raf);
+            setEmptyTopMotion(false);
         };
     }, [emptyStage]);
 
@@ -329,7 +350,7 @@ export default function Chat({
                 className={cn("relative flex w-full shrink-0 flex-col items-center gap-5", columnWidth)}
                 style={{
                     marginTop: emptyTop,
-                    transition: emptyTopMotion.current
+                    transition: emptyTopMotion
                         ? "margin-top 920ms cubic-bezier(0.22, 1, 0.36, 1)"
                         : "none",
                 }}
@@ -337,7 +358,7 @@ export default function Chat({
                 <ChatEmptyState
                     onSelectMode={(mode) => {
                         session.setSelectedMode(mode);
-                        window.dispatchEvent(new CustomEvent("shape-chat-focus-input"));
+                        window.dispatchEvent(new CustomEvent("bettershape-chat-focus-input"));
                     }}
                 />
                 <div className="w-full">
@@ -349,7 +370,7 @@ export default function Chat({
         <>
             <div className="relative min-h-0 flex-1">
                 <div
-                    ref={session.scrollContainerRef}
+                    ref={scrollContainerRef}
                     onScroll={session.handleScroll}
                     onKeyDown={(e) => {
                         if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "a") return;
@@ -371,12 +392,13 @@ export default function Chat({
                             messages={session.messages}
                             isLoading={session.isLoading}
                             activityLabel={session.activityLabel}
-                            messagesEndRef={session.messagesEndRef}
+                            messagesEndRef={messagesEndRef}
                             onRedo={session.handleRedo}
                             onRestore={session.handleRestore}
                             onFork={session.handleFork}
                             isFileEditResolved={session.isEditResolved}
                             activeChatTabId={session.activeChatTabId}
+                            contextSummarized={session.contextSummarized}
                             fullWidthBubbles={false}
                         />
                     </div>

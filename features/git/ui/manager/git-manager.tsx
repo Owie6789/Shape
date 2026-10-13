@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import Image from "next/image";
 import { usePathname, useSearchParams } from "next/navigation";
 import { listen } from "@tauri-apps/api/event";
-import { ShapeLogo } from "@/components/ui/shape-logo";
+import { BetterShapeLogo } from "@/components/ui/bettershape-logo";
 import { SearchInput } from "@/components/ui/search";
 import { cn } from "@/lib/utils";
 import { commands, useProjectState } from "@/lib/backend";
@@ -84,7 +84,7 @@ function initialSection(pathname: string | null, query: string | null): GitSecti
 
 type GitEmptyReason = "no-project" | "no-repo" | "no-commits";
 
-const INTRO_SEEN_KEY = "shape-git-manager-intro-seen";
+const INTRO_SEEN_KEY = "bettershape-git-manager-intro-seen";
 
 function GitManagerIntro({ children }: { children: React.ReactNode }) {
     // Always start false so SSR + first paint match; skip splash after mount if already seen.
@@ -136,7 +136,7 @@ function GitManagerIntro({ children }: { children: React.ReactNode }) {
             <div className="flex h-full items-center justify-center bg-background">
                 <Image
                     src="/logos/logo.svg"
-                    alt="Shape"
+                    alt="BetterShape"
                     width={46}
                     height={56}
                     priority
@@ -156,14 +156,14 @@ function GitManagerIntro({ children }: { children: React.ReactNode }) {
 function GitManagerEmpty({ reason }: { reason: GitEmptyReason }) {
     const detail =
         reason === "no-project"
-            ? "Open a project in Shape to use Git Manager."
+            ? "Open a project in BetterShape to use Git Manager."
             : reason === "no-repo"
               ? "This folder is not a Git repository yet."
               : "This repository has no commits yet.";
 
     return (
         <div className="flex h-full flex-col items-center justify-center gap-3 bg-panel px-6 text-center">
-            <ShapeLogo size={32} />
+            <BetterShapeLogo size={32} />
             <div>
                 <p className="text-base font-medium text-text-primary">Project is empty</p>
                 <p className="mt-1 text-sm text-text-muted">{detail}</p>
@@ -216,8 +216,8 @@ function GitManagerGate() {
 
     useEffect(() => {
         const onRefresh = () => setRefreshToken((n) => n + 1);
-        window.addEventListener("shape-git-refresh", onRefresh);
-        return () => window.removeEventListener("shape-git-refresh", onRefresh);
+        window.addEventListener("bettershape-git-refresh", onRefresh);
+        return () => window.removeEventListener("bettershape-git-refresh", onRefresh);
     }, []);
 
     useEffect(() => {
@@ -332,7 +332,7 @@ function ManagerShell() {
 
     useEffect(() => {
         let unlisten: (() => void) | undefined;
-        void listen<{ section?: string }>("shape-git-section", (event) => {
+        void listen<{ section?: string }>("bettershape-git-section", (event) => {
             const next = coerceGitSection(event.payload?.section);
             if (next && ALL_SECTION_IDS.includes(next)) {
                 setSection(next);
@@ -350,10 +350,10 @@ function ManagerShell() {
                 setActiveLeafId(next);
             }
         };
-        window.addEventListener("shape-git-section", onWindow as EventListener);
+        window.addEventListener("bettershape-git-section", onWindow as EventListener);
         return () => {
             unlisten?.();
-            window.removeEventListener("shape-git-section", onWindow as EventListener);
+            window.removeEventListener("bettershape-git-section", onWindow as EventListener);
         };
     }, [setSection]);
 

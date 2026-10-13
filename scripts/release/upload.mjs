@@ -26,7 +26,7 @@ function parseArgs(argv) {
     publish: false,
     notesFile: null,
     prerelease: false,
-    repo: "useshape/Shape",
+    repo: process.env.GITHUB_REPOSITORY || "Owie6789/Shape",
     releaseId: null,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -149,7 +149,7 @@ function createDraftViaApi(repo, tag, { notesFile, prerelease }) {
   };
 
   return withRetry("create draft", () => {
-    const dir = mkdtempSync(join(tmpdir(), "shape-release-"));
+    const dir = mkdtempSync(join(tmpdir(), "bettershape-release-"));
     const tmp = join(dir, "body.json");
     writeFileSync(tmp, JSON.stringify(body));
     try {
@@ -218,7 +218,10 @@ async function deleteAssetIfExists(repo, releaseId, name) {
 
 async function uploadOne(repo, releaseId, filePath, auth, attempt) {
   const name = basename(filePath);
-  const size = statSync(filePath).size;
+  // Read once and upload those bytes: a stat-then-read pair can see a different
+  // file than the one that is sent.
+  const body = readFileSync(filePath);
+  const size = body.length;
   await deleteAssetIfExists(repo, releaseId, name);
 
   const url = `https://uploads.github.com/repos/${repo}/releases/${releaseId}/assets?name=${encodeURIComponent(name)}`;
@@ -226,8 +229,7 @@ async function uploadOne(repo, releaseId, filePath, auth, attempt) {
     `Uploading ${name} (${(size / 1024 / 1024).toFixed(1)} MiB) attempt ${attempt}`,
   );
 
-  // Buffer small-ish files; NSIS installers are ~25MB — fine in memory for reliability.
-  const body = readFileSync(filePath);
+  // Buffered: NSIS installers are ~25MB — fine in memory for reliability.
   const res = await fetch(url, {
     method: "POST",
     headers: {

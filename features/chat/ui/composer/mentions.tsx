@@ -17,7 +17,7 @@ import { WindowConsole20Regular } from "@fluentui/react-icons/headless/svg/windo
 
 
 
-import { useEffect, useLayoutEffect, useMemo, useState, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { type IconGlyph, Icon } from "@/components/ui/icon";
 
@@ -34,7 +34,8 @@ import { listDesignPreviewSessions, trySelectPendingDesignConcept } from "@/lib/
 import { hostnameOf } from "@/lib/ui/favicon";
 import { getPreviewCurrentUrl } from "@/features/preview/store";
 import { fetchPlugins, peekPluginsCache, type PluginRow } from "@/lib/plugins/api";
-import { listSkills, subscribeSkills, type Skill } from "@/lib/chat/skills";
+import { listSkills, skillIdFromName, subscribeSkills, type Skill } from "@/lib/chat/skills";
+import { ensureFreshScan, useSkillIndex } from "@/lib/chat/skill-index";
 import { PluginLogo } from "@/components/ui/plugin-logo";
 
 type CategoryId = "files" | "code" | "docs" | "terminals" | "chats" | "branch" | "browser" | "mcp" | "plugins" | "skills" | "design" | null;
@@ -92,6 +93,8 @@ export function MentionPicker({
     const [mcpServers, setMcpServers] = useState<{ id: string; name: string }[]>([]);
     const [plugins, setPlugins] = useState<PluginRow[]>(() => peekPluginsCache()?.plugins ?? []);
     const [skills, setSkills] = useState<Skill[]>(() => listSkills());
+    const { scan } = useSkillIndex();
+    const scanItems = scan?.items ?? [];
     const [activeCategory, setActiveCategory] = useState<CategoryId>(null);
     const [highlight, setHighlight] = useState(0);
     const [pos, setPos] = useState<{ left: number; top: number; width: number } | null>(null);
@@ -219,6 +222,10 @@ export function MentionPicker({
     }, [open]);
 
     useEffect(() => subscribeSkills(() => setSkills(listSkills())), []);
+    // Find skills sitting in the project's or the user's skill folders.
+    useEffect(() => {
+        if (open) ensureFreshScan();
+    }, [open]);
 
     const designItems: ChatMention[] = useMemo(() => {
         const tokens: ChatMention[] = DESIGN_TOKEN_MENTIONS.map((t) => ({
@@ -295,7 +302,7 @@ export function MentionPicker({
         }
         if (activeCategory === "plugins") return pluginMentions;
         if (activeCategory === "skills") {
-            return skills
+            const installed = skills
                 .filter((skill) => !q || skill.name.toLowerCase().includes(q) || skill.id.includes(q))
                 .map((skill) => ({
                     kind: "skill" as const,
@@ -303,6 +310,18 @@ export function MentionPicker({
                     path: skill.id,
                     label: skill.name,
                 }));
+            // Skills found in `.claude/skills`, `.agents/skills`, and the user's
+            // own folders can be mentioned without importing them first.
+            const installedIds = new Set(skills.map((skill) => skill.id));
+            const rows: ChatMention[] = [...installed];
+            for (const item of scanItems) {
+                if (item.projectPath !== (project_path ?? "")) continue;
+                const id = skillIdFromName(item.name);
+                if (installedIds.has(id)) continue;
+                if (q && !item.name.toLowerCase().includes(q) && !id.includes(q) && !item.relPath.toLowerCase().includes(q)) continue;
+                rows.push({ kind: "skill", id, path: item.relPath, label: `${item.name} · ${item.rootLabel}` });
+            }
+            return rows;
         }
         if (activeCategory === "chats") {
             return chats
@@ -358,7 +377,7 @@ export function MentionPicker({
             return items;
         }
         return [];
-    }, [activeCategory, fileMentions, files, chats, designItems, mcpServers, pluginMentions, skills, q, filter]);
+    }, [activeCategory, fileMentions, files, chats, designItems, mcpServers, pluginMentions, skills, scanItems, project_path, q, filter]);
 
     const rootItems = useMemo(() => {
         if (activeCategory) return categoryItems;
@@ -398,18 +417,24 @@ export function MentionPicker({
         setHighlight(0);
     }, [activeCategory, filter, rootItems.length, slashItems.length, mode]);
 
-    const pickItem = (item: ChatMention) => {
-        if (item.kind === "design" && item.id) {
-            void trySelectPendingDesignConcept(item.id);
-        }
-        onPick(`${formatMentionToken(item)} `);
-        onClose();
-    };
+    const pickItem = useCallback(
+        (item: ChatMention) => {
+            if (item.kind === "design" && item.id) {
+                void trySelectPendingDesignConcept(item.id);
+            }
+            onPick(`${formatMentionToken(item)} `);
+            onClose();
+        },
+        [onPick, onClose],
+    );
 
-    const pickSlash = (w: AgentWorkflow) => {
-        onPick(`${workflowSlashToken(w)} `);
-        onClose();
-    };
+    const pickSlash = useCallback(
+        (w: AgentWorkflow) => {
+            onPick(`${workflowSlashToken(w)} `);
+            onClose();
+        },
+        [onPick, onClose],
+    );
 
     useEffect(() => {
         if (!open) return;
@@ -437,14 +462,14 @@ export function MentionPicker({
         };
         window.addEventListener("keydown", onKey, true);
         return () => window.removeEventListener("keydown", onKey, true);
-    }, [open, activeCategory, rootItems, slashItems, highlight, onClose, mode, listLen]);
+    }, [open, activeCategory, rootItems, slashItems, highlight, onClose, pickItem, pickSlash, mode, listLen]);
 
     if (!open || !pos) return null;
 
     return createPortal(
         <div
             ref={setMenuEl}
-            className="shape-popover-content fixed z-dropdown overflow-hidden squircle-2xl border border-border-secondary bg-surface-4/80 backdrop-blur-sm shadow-md"
+            className="bettershape-popover-content fixed z-dropdown overflow-hidden squircle-2xl border border-border-secondary bg-surface-4/80 backdrop-blur-sm shadow-md"
             style={{ left: pos.left, top: pos.top, width: pos.width }}
         >
             <SearchInput

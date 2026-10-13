@@ -1,44 +1,81 @@
 ---
 title: Models
-description: Auto is included. Named models spend credits on a paid plan.
+description: Add your own provider keys and pick any model they offer.
 order: 2
 ---
 
 Every message uses a model. You pick it from the model menu in chat.
 
-## Auto
+## Add a provider
 
-Auto is included on every plan, including Free. Use it unless you have a reason to pick a named model.
+Open **Settings → Providers** and paste an API key for the provider you use:
 
-Auto is the default. Leave it there for most work.
+Providers are grouped in the settings page, and the search box filters by name, group, or any model a
+provider serves.
 
-## Named models
+| Group | Providers |
+| --- | --- |
+| Native APIs | OpenAI, Anthropic, Google AI, Azure OpenAI |
+| Gateways | OpenRouter, OpenCode Zen, NVIDIA NIM, Vercel AI Gateway, LLM Gateway, ZenMux, Kilo Code, Cloudflare AI Gateway |
+| Providers | xAI, DeepSeek, Groq, Mistral, Cerebras, Together AI, Fireworks AI, Moonshot (Kimi), Z.ai and Z.ai Coding Plan, Alibaba Qwen, DeepInfra, Venice, MiniMax, Baseten, DigitalOcean Gradient, Cohere, Perplexity, Cloudflare Workers AI, Databricks |
+| Local | Ollama, LM Studio, vLLM, and any other OpenAI-compatible endpoint |
 
-Paid plans can pick a named model (Claude, GPT, Gemini, Grok, and others in the catalog). Named models spend credits. Harder tasks and longer threads spend more.
+xAI, DeepSeek, Groq, Mistral, OpenAI, Anthropic and Google run on their own protocols; everything else in
+that list speaks the OpenAI wire format and differs only by base URL. Chat works as soon as one provider is
+enabled with a key. Without one, BetterShape says so instead of failing mid-turn.
 
-Credits reset each month. Unused credits do not carry over.
+Providers without keys — Ollama, LM Studio, vLLM, and OpenCode Zen's free models — ship **turned off**, so a
+fresh install never sends a request anywhere you did not choose. Enable the card and they route with no key.
 
-If a named model is greyed out, the current plan does not include it. Change the plan on [Billing](https://www.useshape.org/dashboard/settings/billing).
+### Verify a key
 
-## Plans
+**Test connection** asks the provider for its model list with the key and base URL currently in the card. A
+green answer means the key works and the endpoint is right; the app then offers **Use these N models** to
+import the ids your account actually serves. This works before you save, and it is the fastest way to pin
+down a wrong base URL or a key that belongs to another provider.
 
-| Plan | Price | What you get |
-| --- | --- | --- |
-| Free | $0 | Auto |
-| Plus | $15 / month | Auto and named models, 450 credits |
-| Pro | $50 / month | Auto and named models, 1,800 credits |
-| Max | $150 / month | Auto and named models, 5,800 credits |
+**Check chat** goes one step further and sends one short completion through the same translation layer the
+agent uses. That is what proves a model answers — a gateway can list models and still reject completions
+because of a missing header, the wrong auth header, or a model slug the account cannot use.
 
-Change your plan on [Billing](https://www.useshape.org/dashboard/settings/billing). Usage for the current period is on the same page.
+Keys are kept in your OS keychain, not in the app's settings file. Header **values** are stored there too,
+because gateways put tokens in headers.
 
-## How to choose
+### Request headers and auth
 
-- Everyday edits: Auto.
-- A large refactor or a long plan: a named model on a paid plan.
-- You are out of credits: Auto still runs while the Auto pool has quota. If send fails, wait for the reset or change plan.
+Some gateways want more than a bearer token. Open **Request headers & auth** on a provider card to set:
 
-## What a credit is not
+- **Auth header** — where the key travels: `Authorization: Bearer` (default), `api-key` (Azure OpenAI),
+  `x-api-key` (Anthropic-compatible endpoints), `x-goog-api-key`, or none at all for a self-hosted server.
+- **Extra headers** — one `Name: value` per line, e.g. `X-Tenant: acme`, or
+  `cf-aig-authorization: Bearer <token>` for a Cloudflare AI Gateway.
 
-A credit is not one message. One turn can spend a fraction of a credit or several, depending on how much context and work the model does.
+Preset headers appear on the card: OpenRouter, NVIDIA NIM, Vercel AI Gateway, LLM Gateway, ZenMux and Kilo
+Code receive the attribution headers their own clients send, and NVIDIA NIM additionally gets
+`X-BILLING-INVOKE-ORIGIN`. Your lines win over a preset's, and the app identifies itself as
+`bettershape/<version>` on every request.
 
-The usage graph on the dashboard shows credits over recent days.
+Every request also carries the model id's prefix, so a `provider/model` id always lands on the provider you
+configured. Aliases from other clients (`gemini/…`, `opencode-zen/…`, `kimi/…`, `nvidia-nim/…`) resolve to
+the connections on this app's list.
+
+## Pick a model
+
+The model menu lists the models your key can reach, plus anything extra you add by hand. The default is **Auto**, which uses your first configured provider unless you set a different default in **Settings → Providers**. Model ids you paste from somewhere else keep working: a name listed by any configured provider is offered by its own card, and the app maps prefixes such as `gemini/` or `nvidia-nim/` onto the connection they mean.
+
+## Embeddings and search
+
+Codebase search uses an OpenAI-compatible `/embeddings` endpoint. OpenAI, OpenRouter, Mistral, Together AI, DeepInfra, NVIDIA NIM, Alibaba Qwen and the local runtimes offer known embedding models; anything else OpenAI-wire needs the model id typed in (Ollama's `nomic-embed-text`, vLLM's `BAAI/bge-m3`). Providers that cannot embed — Groq, xAI, DeepSeek — are skipped instead of being sent a model they do not serve. Turn embeddings off any time; keyword search and the file index still work.
+
+## Media
+
+Image, speech, and caption tools need an OpenAI-wire provider. They use the same key as chat.
+
+## Cost
+
+Your provider bills you directly. BetterShape shows the tokens spent on the last turn in the composer ring, not a credit balance.
+
+## Related
+
+- [Client trust and provider keys](/docs/developing/client-trust)
+- [Plugins](/docs/customize/plugins)

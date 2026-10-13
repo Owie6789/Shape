@@ -3,6 +3,15 @@
 import { useSyncExternalStore } from "react";
 import { normalizeColorTheme, type ColorThemeId } from "./themes";
 import type { AgentWorkflow } from "@/lib/chat/workflows";
+import {
+    defaultProvidersSettings,
+    mergeProviderConnections,
+    normalizeProvidersSettings,
+    parseHeaderSecretId,
+    providerSecrets,
+    redactProviderSecrets,
+    type ProvidersSettings,
+} from "@/lib/ai/providers";
 
 export type WordWrapSetting = "off" | "on" | "bounded";
 export type AutoSaveSetting = "off" | "afterDelay" | "onFocusChange";
@@ -33,6 +42,8 @@ export interface McpServerConfig {
     env: Record<string, string>;
     url?: string;
     auth: "none" | "oauth";
+    /** Extra HTTP headers (API keys, tenant ids). Never logged. */
+    headers?: Record<string, string>;
     enabled: boolean;
     /** Tool names from this server that should not be exposed to the agent. */
     disabledTools?: string[];
@@ -40,7 +51,7 @@ export interface McpServerConfig {
     oauthClientId?: string;
 }
 
-export interface ShapeSettings {
+export interface BetterShapeSettings {
     editor: {
         fontFamily: string;
         fontSize: number;
@@ -96,6 +107,8 @@ export interface ShapeSettings {
         autoApplyEdits: boolean;
         enabledModels: string[];
         defaultModel: string;
+        /** BYOK connections, default model, embeddings and service keys. */
+        providers: ProvidersSettings;
         /** Models subagents may use. Never inherit the parent chat model. Empty means Auto only. */
         subagentModels: string[];
         /** Used when spawn_subagent omits model or the requested id is not allowed. */
@@ -103,6 +116,8 @@ export interface ShapeSettings {
         /** @deprecated Folded into customRules on load. Kept for storage compat. */
         customSystemPrompt: string;
         customRules: string;
+        /** Standing instructions for compaction — what every summary must keep. */
+        compactInstructions: string;
         mcpServers: McpServerConfig[];
         reviewAdversarialEnabled: boolean;
         /** Trigger phrase → prompt (+ optional plugin tool) injected on send. */
@@ -214,9 +229,16 @@ export interface ShapeSettings {
         /** Color theme. */
         colorTheme: ColorThemeSetting;
     };
+    skills: {
+        /** Extra folders scanned for skill files, in the order the user added them. */
+        folders: string[];
+    };
 }
 
-export const DEFAULT_SETTINGS: ShapeSettings = {
+export const DEFAULT_SETTINGS: BetterShapeSettings = {
+    skills: {
+        folders: [],
+    },
     editor: {
         fontFamily: "'IBM Plex Mono', 'Cascadia Code', Consolas, monospace",
         fontSize: 14,
@@ -269,10 +291,12 @@ export const DEFAULT_SETTINGS: ShapeSettings = {
         autoApplyEdits: false,
         enabledModels: [],
         defaultModel: "auto",
+        providers: defaultProvidersSettings(),
         subagentModels: ["auto"],
         subagentDefaultModel: "auto",
         customSystemPrompt: "",
         customRules: "",
+        compactInstructions: "",
         mcpServers: [],
         reviewAdversarialEnabled: true,
         workflows: [],
@@ -360,9 +384,99 @@ export const DEFAULT_SETTINGS: ShapeSettings = {
     },
 };
 
-const STORAGE_KEY = "shape-settings-v1";
+const STORAGE_KEY = "bettershape-settings-v1";
 
-let currentSettings: ShapeSettings = {
+/**
+ * True once the OS keychain has been confirmed usable. Keys are then stripped
+ * from every copy of the settings that leaves this process (localStorage, the
+ * Tauri store, cross-window events) and read back from the keychain at launch.
+ */
+let secretsVaulted = false;
+
+/** Called by the BYOK bootstrap after probing the keychain. */
+export function setSecretsVaulted(vaulted: boolean): void {
+    secretsVaulted = vaulted;
+}
+
+export function areSecretsVaulted(): boolean {
+    return secretsVaulted;
+}
+
+/** A copy that is safe to persist: no API keys when the keychain is in use. */
+function forStorage<T extends { ai: { providers: ProvidersSettings } }>(settings: T): T {
+    return secretsVaulted ? redactProviderSecrets(settings) : settings;
+}
+
+/** Secrets currently in memory, keyed by their keychain id. */
+export function providerSecretsForVault(): Record<string, string> {
+    return providerSecrets(currentSettings.ai.providers);
+}
+
+/**
+ * Fold keychain secrets back into the live settings.
+ *
+ * Values already in memory win, so a migration from plaintext settings keeps
+ * whatever the user had before the keychain was in use.
+ */
+export function applyVaultSecrets(secrets: Record<string, string>): void {
+    let changed = false;
+    const connections = { ...currentSettings.ai.providers.connections };
+    for (const [id, value] of Object.entries(secrets)) {
+        const secret = value.trim();
+        if (!secret) continue;
+        const header = parseHeaderSecretId(id);
+        if (header) {
+            const connection = connections[header.id];
+            // The name has to be in settings already: a stale keychain entry for
+            // a header the user removed must not resurrect itself.
+            if (connection && Object.prototype.hasOwnProperty.call(connection.headers, header.name) && !connection.headers[header.name]?.trim()) {
+                connections[header.id] = {
+                    ...connection,
+                    headers: { ...connection.headers, [header.name]: secret },
+                };
+                changed = true;
+            }
+            continue;
+        }
+        const connection = connections[id as keyof typeof connections];
+        if (connection && !connection.apiKey.trim()) {
+            connections[id as keyof typeof connections] = { ...connection, apiKey: secret };
+            changed = true;
+        }
+    }
+    const search = currentSettings.ai.providers.services.search;
+    const composio = currentSettings.ai.providers.services.composio;
+    const searchKey = secrets["service:search"]?.trim();
+    const composioKey = secrets["service:composio"]?.trim();
+    let services = currentSettings.ai.providers.services;
+    if (searchKey && !search.apiKey.trim()) {
+        services = { ...services, search: { ...search, apiKey: searchKey } };
+        changed = true;
+    }
+    if (composioKey && !composio.apiKey.trim()) {
+        services = { ...services, composio: { ...composio, apiKey: composioKey } };
+        changed = true;
+    }
+    if (!changed) {
+        // Still rewrite both stores: an older build may have left plaintext keys
+        // behind, and redaction only takes effect on the next write.
+        persist();
+        void persistToTauriStore();
+        return;
+    }
+    currentSettings = {
+        ...currentSettings,
+        ai: {
+            ...currentSettings.ai,
+            providers: { ...currentSettings.ai.providers, connections, services },
+        },
+    };
+    persist();
+    void persistToTauriStore();
+    emit();
+}
+
+let currentSettings: BetterShapeSettings = {
     ...DEFAULT_SETTINGS,
     editor: { ...DEFAULT_SETTINGS.editor },
     terminal: { ...DEFAULT_SETTINGS.terminal },
@@ -392,9 +506,9 @@ let settingsBridgeInitialized = false;
 const listeners = new Set<() => void>();
 
 function mergeAiSettings(
-    base: ShapeSettings["ai"] | undefined,
-    patch: Partial<ShapeSettings["ai"]> | undefined,
-): ShapeSettings["ai"] {
+    base: BetterShapeSettings["ai"] | undefined,
+    patch: Partial<BetterShapeSettings["ai"]> | undefined,
+): BetterShapeSettings["ai"] {
     const merged = { ...DEFAULT_SETTINGS.ai, ...base, ...patch };
     merged.pluginApprovals = {
         ...DEFAULT_SETTINGS.ai.pluginApprovals,
@@ -409,6 +523,8 @@ function mergeAiSettings(
     merged.pluginApprovalDefault = patch?.pluginApprovalDefault
         ?? base?.pluginApprovalDefault
         ?? DEFAULT_SETTINGS.ai.pluginApprovalDefault;
+    merged.compactInstructions =
+        patch?.compactInstructions ?? base?.compactInstructions ?? DEFAULT_SETTINGS.ai.compactInstructions;
     merged.workflows = patch?.workflows ?? base?.workflows ?? DEFAULT_SETTINGS.ai.workflows;
     merged.subagentModels = Array.isArray(patch?.subagentModels)
         ? patch.subagentModels
@@ -419,6 +535,24 @@ function mergeAiSettings(
         patch?.subagentDefaultModel
         ?? base?.subagentDefaultModel
         ?? DEFAULT_SETTINGS.ai.subagentDefaultModel;
+    merged.providers = normalizeProvidersSettings({
+        ...(base?.providers ?? DEFAULT_SETTINGS.ai.providers),
+        ...(patch?.providers ?? {}),
+        connections: {
+            ...(base?.providers?.connections ?? DEFAULT_SETTINGS.ai.providers.connections),
+            ...(patch?.providers?.connections ?? {}),
+        },
+        services: {
+            search: {
+                ...(base?.providers?.services?.search ?? DEFAULT_SETTINGS.ai.providers.services.search),
+                ...(patch?.providers?.services?.search ?? {}),
+            },
+            composio: {
+                ...(base?.providers?.services?.composio ?? DEFAULT_SETTINGS.ai.providers.services.composio),
+                ...(patch?.providers?.services?.composio ?? {}),
+            },
+        },
+    });
     // Legacy "System Instructions" fold into Rules — one concept for user guidance.
     const legacy = merged.customSystemPrompt?.trim();
     if (legacy) {
@@ -429,8 +563,18 @@ function mergeAiSettings(
     return merged;
 }
 
-function mergeSettings(base: ShapeSettings, patch: Partial<ShapeSettings>): ShapeSettings {
+function mergeSettings(
+    base: BetterShapeSettings,
+    patch: Partial<BetterShapeSettings>,
+    options?: { preserveSecrets?: boolean },
+): BetterShapeSettings {
     const aiPatch = patch.ai ? { ...patch.ai } : undefined;
+    const mergedAi = mergeAiSettings(base.ai, aiPatch);
+    // Storage carries no keys once the keychain is in use, so a payload coming
+    // back from disk (or from the other window) must not blank the live ones.
+    const ai = options?.preserveSecrets
+        ? { ...mergedAi, providers: mergeProviderConnections(currentSettings.ai.providers, mergedAi.providers) }
+        : mergedAi;
     return {
         editor: { ...DEFAULT_SETTINGS.editor, ...base.editor, ...patch.editor },
         terminal: { ...DEFAULT_SETTINGS.terminal, ...base.terminal, ...patch.terminal },
@@ -445,7 +589,17 @@ function mergeSettings(base: ShapeSettings, patch: Partial<ShapeSettings>): Shap
                 ...(patch.git?.blame ?? {}),
             },
         },
-        ai: mergeAiSettings(base.ai, aiPatch),
+        ai,
+        skills: {
+            ...DEFAULT_SETTINGS.skills,
+            ...base.skills,
+            ...patch.skills,
+            folders: Array.isArray(patch.skills?.folders)
+                ? patch.skills.folders
+                : Array.isArray(base.skills?.folders)
+                  ? base.skills.folders
+                  : DEFAULT_SETTINGS.skills.folders,
+        },
         files: { ...DEFAULT_SETTINGS.files, ...base.files, ...patch.files },
         eslint: { ...DEFAULT_SETTINGS.eslint, ...base.eslint, ...patch.eslint },
         prettier: { ...DEFAULT_SETTINGS.prettier, ...base.prettier, ...patch.prettier },
@@ -456,10 +610,10 @@ function mergeSettings(base: ShapeSettings, patch: Partial<ShapeSettings>): Shap
         designDiagnostics: { ...DEFAULT_SETTINGS.designDiagnostics, ...base.designDiagnostics, ...patch.designDiagnostics },
         tailwindControls: {
             ...DEFAULT_SETTINGS.tailwindControls,
-            ...(base as ShapeSettings & { inlinePickers?: { enable: boolean } }).tailwindControls,
-            ...(base as ShapeSettings & { inlinePickers?: { enable: boolean } }).inlinePickers,
+            ...(base as BetterShapeSettings & { inlinePickers?: { enable: boolean } }).tailwindControls,
+            ...(base as BetterShapeSettings & { inlinePickers?: { enable: boolean } }).inlinePickers,
             ...patch.tailwindControls,
-            ...(patch as Partial<ShapeSettings & { inlinePickers?: { enable: boolean } }>).inlinePickers,
+            ...(patch as Partial<BetterShapeSettings & { inlinePickers?: { enable: boolean } }>).inlinePickers,
         },
         designBlame: {
             ...DEFAULT_SETTINGS.designBlame,
@@ -515,7 +669,7 @@ export function resolveDefaultTerminalShell(): "powershell" | "cmd" | "gitbash" 
     return "powershell";
 }
 
-export function isLspLanguageEnabled(language: string, settings: ShapeSettings = getSettings()): boolean {
+export function isLspLanguageEnabled(language: string, settings: BetterShapeSettings = getSettings()): boolean {
     switch (language) {
         case "typescript":
             return settings.lsp.typescript;
@@ -536,8 +690,8 @@ export function getFileExcludePatterns(): string {
     return getSettings().files.exclude;
 }
 
-function applySettingsFromPayload(next: Partial<ShapeSettings> | ShapeSettings) {
-    currentSettings = mergeSettings(DEFAULT_SETTINGS, next);
+function applySettingsFromPayload(next: Partial<BetterShapeSettings> | BetterShapeSettings) {
+    currentSettings = mergeSettings(DEFAULT_SETTINGS, next, { preserveSecrets: true });
     hydrated = true;
     applyAppearanceSettings(currentSettings);
 }
@@ -545,7 +699,7 @@ function applySettingsFromPayload(next: Partial<ShapeSettings> | ShapeSettings) 
 function emitLocal() {
     listeners.forEach((l) => l());
     if (typeof window !== "undefined") {
-        window.dispatchEvent(new CustomEvent("shape-settings-changed", { detail: currentSettings }));
+        window.dispatchEvent(new CustomEvent("bettershape-settings-changed", { detail: currentSettings }));
     }
 }
 
@@ -553,7 +707,9 @@ function emit() {
     emitLocal();
     if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {
         void import("@tauri-apps/api/event").then(({ emit: tauriEmit }) => {
-            void tauriEmit("shape-settings-changed", currentSettings).catch(() => { /* ignore */ });
+            void tauriEmit("bettershape-settings-changed", forStorage(currentSettings)).catch(() => {
+                /* ignore */
+            });
         }).catch(() => { /* ignore */ });
     }
 }
@@ -566,7 +722,7 @@ export function initSettingsBridge(): void {
     window.addEventListener("storage", (event) => {
         if (event.key !== STORAGE_KEY || !event.newValue) return;
         try {
-            applySettingsFromPayload(JSON.parse(event.newValue) as Partial<ShapeSettings>);
+            applySettingsFromPayload(JSON.parse(event.newValue) as Partial<BetterShapeSettings>);
             emitLocal();
         } catch {
             /* ignore malformed storage payload */
@@ -575,10 +731,10 @@ export function initSettingsBridge(): void {
 
     if ("__TAURI_INTERNALS__" in window) {
         void import("@tauri-apps/api/event").then(({ listen }) => {
-            void listen<ShapeSettings>("shape-settings-changed", (event) => {
+            void listen<BetterShapeSettings>("bettershape-settings-changed", (event) => {
                 applySettingsFromPayload(event.payload);
                 try {
-                    localStorage.setItem(STORAGE_KEY, JSON.stringify(currentSettings));
+                    localStorage.setItem(STORAGE_KEY, JSON.stringify(forStorage(currentSettings)));
                 } catch { /* ignore */ }
                 emitLocal();
             });
@@ -591,7 +747,7 @@ function loadFromLocalStorage() {
     try {
         const raw = localStorage.getItem(STORAGE_KEY);
         if (raw) {
-            const parsed = JSON.parse(raw) as Partial<ShapeSettings>;
+            const parsed = JSON.parse(raw) as Partial<BetterShapeSettings>;
             const rawChannel = parsed.updates?.channel;
             currentSettings = mergeSettings(DEFAULT_SETTINGS, parsed);
             if (rawChannel && rawChannel !== currentSettings.updates.channel) persist();
@@ -604,7 +760,17 @@ function loadFromLocalStorage() {
 function persist() {
     if (typeof window === "undefined") return;
     try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(currentSettings));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(forStorage(currentSettings)));
+    } catch { /* ignore */ }
+}
+
+/** Mirror the settings into the Tauri store file (redacted when vaulted). */
+async function persistToTauriStore(): Promise<void> {
+    try {
+        const { load } = await import("@tauri-apps/plugin-store");
+        const store = await load("settings.json", { autoSave: true, defaults: {} });
+        await store.set("settings", forStorage(currentSettings));
+        await store.save();
     } catch { /* ignore */ }
 }
 
@@ -615,12 +781,16 @@ export async function initSettings(): Promise<void> {
     try {
         const { load } = await import("@tauri-apps/plugin-store");
         const store = await load("settings.json", { autoSave: true, defaults: {} });
-        const stored = await store.get<Partial<ShapeSettings>>("settings");
+        const stored = await store.get<Partial<BetterShapeSettings>>("settings");
         if (stored) {
-            currentSettings = mergeSettings(DEFAULT_SETTINGS, stored);
+            currentSettings = mergeSettings(DEFAULT_SETTINGS, stored, { preserveSecrets: true });
             persist();
+            // Rewrite through the redaction path so a pre-keychain build's keys
+            // do not survive in the store file.
+            await store.set("settings", forStorage(currentSettings));
+            await store.save();
         } else {
-            await store.set("settings", currentSettings);
+            await store.set("settings", forStorage(currentSettings));
             await store.save();
         }
     } catch {
@@ -640,7 +810,7 @@ export async function initSettings(): Promise<void> {
     });
 }
 
-export function getSettings(): ShapeSettings {
+export function getSettings(): BetterShapeSettings {
     if (!hydrated && typeof window !== "undefined") {
         loadFromLocalStorage();
         hydrated = true;
@@ -649,18 +819,11 @@ export function getSettings(): ShapeSettings {
     return currentSettings;
 }
 
-export function updateSettings(patch: Partial<ShapeSettings>): void {
+export function updateSettings(patch: Partial<BetterShapeSettings>): void {
     currentSettings = mergeSettings(currentSettings, patch);
     persist();
     applyAppearanceSettings(currentSettings);
-    void (async () => {
-        try {
-            const { load } = await import("@tauri-apps/plugin-store");
-            const store = await load("settings.json", { autoSave: true, defaults: {} });
-            await store.set("settings", currentSettings);
-            await store.save();
-        } catch { /* ignore */ }
-    })();
+    void persistToTauriStore();
     emit();
 }
 
@@ -676,7 +839,7 @@ export function microphoneErrorMessage(err: unknown): string {
     switch (name) {
         case "NotAllowedError":
         case "SecurityError":
-            return "Microphone access is blocked. Allow it for Shape in Windows privacy settings.";
+            return "Microphone access is blocked. Allow it for BetterShape in Windows privacy settings.";
         case "NotFoundError":
         case "OverconstrainedError":
             return "No microphone was found.";
@@ -688,14 +851,14 @@ export function microphoneErrorMessage(err: unknown): string {
     }
 }
 
-export function updateSettingSection<K extends keyof ShapeSettings>(
+export function updateSettingSection<K extends keyof BetterShapeSettings>(
     section: K,
-    patch: Partial<ShapeSettings[K]>
+    patch: Partial<BetterShapeSettings[K]>
 ): void {
-    updateSettings({ [section]: { ...currentSettings[section], ...patch } } as Partial<ShapeSettings>);
+    updateSettings({ [section]: { ...currentSettings[section], ...patch } } as Partial<BetterShapeSettings>);
 }
 
-export function useSettings(): ShapeSettings {
+export function useSettings(): BetterShapeSettings {
     return useSyncExternalStore(
         (listener) => {
             listeners.add(listener);
@@ -717,7 +880,7 @@ function paintDarkTheme() {
     document.documentElement.classList.add("dark");
 }
 
-export function applyAppearanceSettings(settings: ShapeSettings) {
+export function applyAppearanceSettings(settings: BetterShapeSettings) {
     if (typeof document === "undefined") return;
     document.documentElement.style.setProperty("--editor-font-family", settings.editor.fontFamily);
     document.documentElement.style.setProperty("--editor-font-size", `${settings.editor.fontSize}px`);
@@ -725,7 +888,7 @@ export function applyAppearanceSettings(settings: ShapeSettings) {
     paintDarkTheme();
 }
 
-export function getEditorOptionsFromSettings(settings: ShapeSettings = getSettings()) {
+export function getEditorOptionsFromSettings(settings: BetterShapeSettings = getSettings()) {
     return {
         fontFamily: settings.editor.fontFamily,
         fontSize: settings.editor.fontSize,

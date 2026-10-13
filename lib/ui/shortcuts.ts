@@ -18,8 +18,8 @@ export interface KeyBinding {
 
 export type KeybindingPresetId = keyof typeof presetPack.presets;
 
-const OVERRIDE_KEY = "shape-keybindings-override";
-const PRESET_KEY = "shape-keybindings-preset";
+const OVERRIDE_KEY = "bettershape-keybindings-override";
+const PRESET_KEY = "bettershape-keybindings-preset";
 
 type RawBinding = {
     id?: string;
@@ -63,7 +63,7 @@ export function loadKeybindings(): KeyBinding[] {
 
 export function saveKeybindingOverrides(overrides: Record<string, string>): void {
     localStorage.setItem(OVERRIDE_KEY, JSON.stringify(overrides));
-    window.dispatchEvent(new Event("shape-keybindings-changed"));
+    window.dispatchEvent(new Event("bettershape-keybindings-changed"));
 }
 
 export function setKeybindingOverride(label: string, key: string | null): void {
@@ -76,7 +76,7 @@ export function setKeybindingOverride(label: string, key: string | null): void {
 export function resetKeybindingOverrides(): void {
     localStorage.removeItem(OVERRIDE_KEY);
     localStorage.removeItem(PRESET_KEY);
-    window.dispatchEvent(new Event("shape-keybindings-changed"));
+    window.dispatchEvent(new Event("bettershape-keybindings-changed"));
 }
 
 export function getKeybindingOverrides(): Record<string, string> {
@@ -248,12 +248,18 @@ function keyNameFromEvent(e: KeyboardEvent): string | null {
     return null;
 }
 
-/** Normalize a KeyboardEvent into Shape's Ctrl+K S chord format. */
+/** Normalize a KeyboardEvent into BetterShape's Ctrl+K S chord format. */
 export function eventToKeyChord(e: KeyboardEvent): string | null {
     const keyName = keyNameFromEvent(e);
     if (!keyName) return null;
     return eventModifierPrefix(e) + keyName;
 }
+
+/**
+ * Shortcuts the focused surface owns: the global handler must not
+ * preventDefault them (Find belongs to the editor / browser).
+ */
+const SURFACE_OWNED_SHORTCUTS = new Set(["Find"]);
 
 /**
  * React hook that registers global keyboard shortcuts from the built-in config.
@@ -268,8 +274,8 @@ export function useKeyboardShortcuts() {
             bindingsRef.current = loadKeybindings();
         };
         reload();
-        window.addEventListener("shape-keybindings-changed", reload);
-        return () => window.removeEventListener("shape-keybindings-changed", reload);
+        window.addEventListener("bettershape-keybindings-changed", reload);
+        return () => window.removeEventListener("bettershape-keybindings-changed", reload);
     }, []);
 
     useEffect(() => {
@@ -324,7 +330,7 @@ export function useKeyboardShortcuts() {
                 ) {
                     e.preventDefault();
                     window.dispatchEvent(
-                        new CustomEvent("shape-terminal-shortcut", {
+                        new CustomEvent("bettershape-terminal-shortcut", {
                             detail: {
                                 action:
                                     binding.label === "Close Tab" ? "close_tab" : "close_all_tabs",
@@ -345,6 +351,9 @@ export function useKeyboardShortcuts() {
                 if (isInput && inputIgnored.includes(fullShortcut)) {
                     return;
                 }
+
+                // Find (Ctrl+F) opens the editor's search panel — never swallow it.
+                if (SURFACE_OWNED_SHORTCUTS.has(binding.label)) return;
 
                 e.preventDefault();
                 if (!dispatchShortcutAction(binding.label, binding.key)) {
