@@ -471,7 +471,7 @@ pub async fn stream_chat(
             &format!(
                 "API error {}: {}",
                 status,
-                &text[..floor_char_boundary(text, 500)]
+                &text[..floor_char_boundary(&text, 500)]
             ),
         );
 
@@ -1112,7 +1112,7 @@ pub async fn complete_chat_cancellable(
 
     logging::debug(
         "complete",
-        &format!("Result: {}", &content[..floor_char_boundary(content, 80)]),
+        &format!("Result: {}", &content[..floor_char_boundary(&content, 80)]),
     );
     Ok(content)
 }
