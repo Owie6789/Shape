@@ -13,16 +13,16 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
     "src-tauri/target/**",
-    // Build artifacts of `npm run build:runtime` (esbuild, minified) and the
-    // vendored Tailwind browser build copied next to them. Linting generated
-    // output only produces noise that hides real findings in source.
-    "src-tauri/runtime/**",
-    "public/preview/**",
     // One-off migration scripts not part of app
     "src-tauri/scripts/**",
     // Generated docs search index
     "docs/generated/**",
   ]),
+  // Build artifacts of `npm run build:runtime` (esbuild, minified) and the
+  // vendored Tailwind browser build copied next to them. Linting generated
+  // output only produces noise that hides real findings in source. Kept as a
+  // separate block so it does not collide with edits to the list above.
+  globalIgnores(["src-tauri/runtime/**", "public/preview/**"]),
   {
     // CommonJS build tooling, run directly by node — `require` is correct here.
     files: ["src-tauri/scripts/**/*.js", "scripts/**/*.mjs"],
