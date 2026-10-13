@@ -18,6 +18,10 @@ const eslintConfig = defineConfig([
     // output only produces noise that hides real findings in source.
     "src-tauri/runtime/**",
     "public/preview/**",
+    // One-off migration scripts not part of app
+    "src-tauri/scripts/**",
+    // Generated docs search index
+    "docs/generated/**",
   ]),
   {
     // CommonJS build tooling, run directly by node — `require` is correct here.
