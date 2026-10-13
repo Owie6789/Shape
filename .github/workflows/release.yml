@@ -228,9 +228,24 @@ jobs:
           fi
 
       - name: Generate release notes
+        env:
+          PREV_TAG: ${{ steps.prev.outputs.tag }}
         run: |
-          if [ -n "${{ steps.prev.outputs.tag }}" ]; then
-            node scripts/release/notes.mjs --from "${{ steps.prev.outputs.tag }}" --to HEAD --output release-notes.md
+          set -euo pipefail
+          # Validate PREV_TAG is a safe git ref (no command substitution, only alphanumeric, dot, dash, slash, underscore)
+          if [ -n "${PREV_TAG:-}" ]; then
+            if ! echo "$PREV_TAG" | grep -Eq '^[a-zA-Z0-9._/v-]+$'; then
+              echo "::error::Invalid previous tag format: $PREV_TAG"
+              exit 1
+            fi
+            # Verify it's a real git ref
+            if ! git rev-parse --verify "$PREV_TAG" >/dev/null 2>&1; then
+              echo "::warning::Previous tag $PREV_TAG not found as git ref, ignoring"
+              PREV_TAG=""
+            fi
+          fi
+          if [ -n "${PREV_TAG:-}" ]; then
+            node scripts/release/notes.mjs --from "$PREV_TAG" --to HEAD --output release-notes.md
           else
             node scripts/release/notes.mjs --to HEAD --output release-notes.md
           fi
@@ -259,7 +274,9 @@ jobs:
 
       - name: Summary
         run: |
-          echo "## Release ${{ github.ref_name }} published :rocket:" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Artifacts:" >> $GITHUB_STEP_SUMMARY
-          ls -lh dist/release | sed 's/^/- /' >> $GITHUB_STEP_SUMMARY || true
+          {
+            echo "## Release ${{ github.ref_name }} published :rocket:"
+            echo ""
+            echo "Artifacts:"
+            find dist/release -type f -exec ls -lh {} \; | awk '{print "- " $9 " (" $5 ")"}' || true
+          } >> "$GITHUB_STEP_SUMMARY"

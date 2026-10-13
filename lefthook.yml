@@ -8,7 +8,7 @@ pre-commit:
   jobs:
     - name: eslint (staged)
       glob: "*.{js,ts,jsx,tsx,mjs,cjs}"
-      run: npx eslint --max-warnings=0 {staged_files}
+      run: npx eslint --max-warnings=0 --no-warn-ignored {staged_files}
 
     - name: typecheck (fast)
       # Run tsc on whole project - fast enough for pre-commit, catches type errors early

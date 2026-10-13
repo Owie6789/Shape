@@ -46,6 +46,22 @@ jobs:
 
       - run: npm ci
 
+      - name: Generate nightly version (for build)
+        id: nightly-version
+        run: |
+          BASE=$(node -p "require('./package.json').version")
+          NIGHTLY="${BASE}-nightly.$(date +%Y%m%d).${GITHUB_RUN_NUMBER}"
+          echo "version=$NIGHTLY" >> "$GITHUB_OUTPUT"
+          echo "Nightly version: $NIGHTLY"
+          # Set package.json to nightly version so installers embed correct version
+          node -e "
+            const fs=require('fs');
+            const pkg=JSON.parse(fs.readFileSync('package.json','utf8'));
+            pkg.version='${NIGHTLY}';
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2)+'\n');
+          "
+          echo "Updated package.json to $NIGHTLY"
+
       - name: Sync version
         run: npm run sync-version
 
@@ -55,25 +71,49 @@ jobs:
       - name: Build Tauri (NSIS)
         shell: bash
         env:
-          # Nightly builds use placeholder - not signed with production keys
-          # If you want signed nightly, set these secrets and remove the placeholder logic
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          SHAPE_CLOUD_BUILD_SECRET: ${{ secrets.SHAPE_CLOUD_BUILD_SECRET || 'nightly-placeholder' }}
+          SHAPE_CLOUD_BUILD_SECRET: ${{ secrets.SHAPE_CLOUD_BUILD_SECRET }}
           NEXT_PUBLIC_SHAPE_WEBSITE_URL: https://www.useshape.org
         run: |
+          set -euo pipefail
+          # Skip build if secrets missing (nightly placeholder case) - but don't hide real failures
+          if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ] || [ -z "${SHAPE_CLOUD_BUILD_SECRET:-}" ]; then
+            echo "::warning::Secrets missing, skipping nightly build (expected for forks without secrets)"
+            mkdir -p dist/nightly-placeholder
+            echo "No secrets - build skipped" > dist/nightly-placeholder/README.txt
+            exit 0
+          fi
           if [ -n "${{ matrix.target }}" ]; then
-            npm run tauri -- build --bundles nsis --target "${{ matrix.target }}" || echo "::warning::Nightly build failed (expected if secrets missing)"
+            npm run tauri -- build --bundles nsis --target "${{ matrix.target }}"
           else
-            npm run tauri -- build --bundles nsis || echo "::warning::Nightly build failed (expected if secrets missing)"
+            npm run tauri -- build --bundles nsis
           fi
 
-      - name: Upload nightly artifact (if exists)
+      - name: Verify build output exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -d "dist/nightly-placeholder" ]; then
+            echo "Build was skipped due to missing secrets - placeholder exists"
+            exit 0
+          fi
+          # Check for expected installer
+          if ! find src-tauri/target -name "*.exe" -path "*/bundle/nsis/*" | grep -q .; then
+            echo "::error::No NSIS installer found after build"
+            find src-tauri/target -type f -name "*.exe" | head -n 20 || true
+            exit 1
+          fi
+          echo "✓ Installer found"
+
+      - name: Upload nightly artifact
         uses: actions/upload-artifact@v4
         with:
           name: nightly-${{ matrix.arch }}
-          path: src-tauri/target/**/bundle/nsis/*.exe
-          if-no-files-found: ignore
+          path: |
+            src-tauri/target/**/bundle/nsis/*.exe
+            dist/nightly-placeholder/
+          if-no-files-found: error
           retention-days: 3
 
   # Optional: Create nightly prerelease if manually triggered
@@ -103,7 +143,7 @@ jobs:
         run: |
           BASE=$(node -p "require('./package.json').version")
           NIGHTLY="${BASE}-nightly.$(date +%Y%m%d).${GITHUB_RUN_NUMBER}"
-          echo "version=$NIGHTLY" >> $GITHUB_OUTPUT
+          echo "version=$NIGHTLY" >> "$GITHUB_OUTPUT"
           echo "Nightly version: $NIGHTLY"
 
       - name: Download artifacts
@@ -113,15 +153,30 @@ jobs:
           merge-multiple: true
 
       - name: List artifacts
-        run: ls -lhR dist/nightly || echo "No artifacts"
+        run: |
+          ls -lhR dist/nightly || echo "No artifacts"
+          if [ -f "dist/nightly/README.txt" ]; then
+            echo "Placeholder build detected - skipping publish"
+          fi
 
       - name: Publish nightly release (draft)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
+          # Skip if placeholder (no real build)
+          if [ -f "dist/nightly/README.txt" ]; then
+            echo "Placeholder build - no real artifacts, skipping publish"
+            exit 0
+          fi
           if [ -z "$(ls -A dist/nightly 2>/dev/null)" ]; then
             echo "No artifacts to publish - skipping"
             exit 0
+          fi
+          # Ensure we have actual installers
+          if ! find dist/nightly -name "*.exe" | grep -q .; then
+            echo "::error::No exe installers found in artifacts"
+            exit 1
           fi
           TAG="v${{ steps.version.outputs.version }}"
           if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
@@ -129,9 +184,10 @@ jobs:
             exit 0
           fi
           gh release create "$TAG" \
+            --target "${{ github.sha }}" \
             --repo "${{ github.repository }}" \
             --title "Nightly ${{ steps.version.outputs.version }}" \
             --notes "Automated nightly build from ${{ github.sha }}. Not for production use." \
             --prerelease \
             --draft \
-            dist/nightly/* || echo "::warning::Failed to create nightly release"
+            dist/nightly/*.exe

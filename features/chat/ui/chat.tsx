@@ -290,8 +290,8 @@ export default function Chat({
             hideModeSelect={false}
             selectedMode={session.selectedMode}
             setSelectedMode={session.setSelectedMode}
-            reasoningEffort={session.reasoningEffort as any}
-            setReasoningEffort={(e) => session.setReasoningEffort(e as any)}
+            reasoningEffort={session.reasoningEffort}
+            setReasoningEffort={session.setReasoningEffort}
             pendingEdits={session.pendingEdits}
             onAcceptAllEdits={() => void session.handleAcceptAll()}
             onRejectAllEdits={() => void session.handleRejectAll()}

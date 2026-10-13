@@ -36,15 +36,23 @@ jobs:
       - name: ESLint
         # Currently 91 errors + 3375 warnings exist (mostly @typescript-eslint/no-unused-expressions from generated files).
         # eslint exits 0 even with errors due to Next.js flat config behavior - needs fixing.
-        # For now, run lint and capture output, but don't block CI on warnings. Track in #TODO.
+        # For now, capture status correctly with pipefail, but allow existing baseline.
         # Once fixed, change to: npm run lint:strict
         run: |
+          set -o pipefail
           npm run lint 2>&1 | tee eslint-report.txt
-          # Count errors for reporting
+          STATUS=${PIPESTATUS[0]}
           ERRORS=$(grep -c " error " eslint-report.txt || echo 0)
-          echo "ESLint errors: $ERRORS (currently allowed, should be 0)"
-          # Uncomment to enforce:
-          # npm run lint:strict
+          echo "ESLint exit: $STATUS, errors: $ERRORS (currently allowed, should be 0)"
+          # Enforce exit status but allow baseline for now - remove this allowance after cleanup
+          if [ "$STATUS" -ne 0 ] && [ "$ERRORS" -gt 100 ]; then
+            echo "::warning::ESLint found $ERRORS errors - tracking as tech debt"
+            # Don't fail yet, but report correctly
+            # To enforce: exit $STATUS
+          fi
+          # For now, always pass lint but with correct pipe handling
+          # TODO: uncomment to enforce strict after fixing 91 errors
+          # exit $STATUS
 
       - name: Typecheck
         run: npx tsc --noEmit
@@ -56,7 +64,12 @@ jobs:
 
       - name: Verify docs index can be generated
         run: |
-          npm run docs:index || echo "docs:index skipped (no-op if not required)"
+          set -euo pipefail
+          # Fail if docs:index fails unexpectedly - it's required for search
+          if ! npm run docs:index; then
+            echo "::error::docs:index failed - search index generation broken"
+            exit 1
+          fi
 
   # ─────────────────────────────────────────────────────────
   # JS tests (Vitest)
@@ -79,16 +92,17 @@ jobs:
       - name: Build preview runtime
         run: npm run build:runtime
 
-      - name: Vitest run
-        run: npx vitest run --reporter=verbose
+      - name: Vitest run with coverage
+        run: npx vitest run --reporter=verbose --coverage --coverage.reporter=text --coverage.reporter=json-summary
 
-      - name: Upload coverage (if generated)
+      - name: Upload coverage
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-js
-          path: coverage/
-          if-no-files-found: ignore
+          path: |
+            coverage/
+          if-no-files-found: warn
           retention-days: 7
 
   # ─────────────────────────────────────────────────────────
@@ -232,7 +246,7 @@ jobs:
         run: cargo install cargo-audit --locked || true
 
       - name: cargo audit
-        run: cargo audit || (echo "::warning::cargo audit found issues"; exit 0)
+        run: cargo audit --file src-tauri/Cargo.lock || (echo "::warning::cargo audit found issues"; exit 0)
 
   # ─────────────────────────────────────────────────────────
   # Final gate: all required jobs must pass

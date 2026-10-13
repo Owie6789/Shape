@@ -1,6 +1,7 @@
 # Workflows
 
 ## CI (`ci.yml`)
+
 Main quality gate. Runs on PRs and pushes to `main`.
 
 - Lint & Typecheck (ESLint + tsc --noEmit)
@@ -17,6 +18,7 @@ Uses composite action `.github/actions/setup` for Node 22 + Rust + caches.
 Concurrency: cancel stale PR runs, let main finish.
 
 ## Security (`security.yml`)
+
 - CodeQL for JS/TS and Rust
 - Dependency Review (PRs only)
 - Audit (npm + cargo)
@@ -26,6 +28,7 @@ Concurrency: cancel stale PR runs, let main finish.
 Triggers: PR, push to main, weekly Monday 00:00 UTC.
 
 ## Release (`release.yml`)
+
 Tag `v*` → test → build Windows x86_64 + aarch64 → publish.
 
 - Test job validates tag == package.json version
@@ -37,15 +40,18 @@ Tag `v*` → test → build Windows x86_64 + aarch64 → publish.
 Concurrency: `release-${ref}` cancel-in-progress false (never cancel release).
 
 ## PR Hygiene (`pr.yml`)
+
 - Title lint (conventional area: description)
 - Large file check (>5MB)
 - Secret heuristic
 - Size warning (>2000 lines)
 
 ## Composite Setup (`.github/actions/setup`)
+
 DRY setup for Node, Rust, system deps, caches.
 
 Inputs:
+
 - node-version (default 22)
 - install-rust (default true)
 - rust-targets
@@ -54,13 +60,14 @@ Inputs:
 - cache-key
 
 ## Dependabot (`.github/dependabot.yml`)
-Weekly updates for npm, cargo (src-tauri), github-actions.
+
+Weekly updates for npm, cargo (src-tauri), GitHub Actions.
 
 Grouping for dev deps and next ecosystem to reduce noise.
 
 ## Local vs CI
 
-```
+```text
 npm run lint          → lint job
 npx tsc --noEmit      → lint job
 npm run test          → test-js

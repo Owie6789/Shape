@@ -12,6 +12,7 @@ This document captures a deep codebase review and online recon spree for CI/CD b
 ### What was found (Before)
 
 **Existing CI (`ci.yml`):**
+
 - Single job `test` on ubuntu-latest only
 - No lint, no typecheck, no build verification, no version sync check
 - No caching for Next.js, only npm + rust-cache
@@ -23,6 +24,7 @@ This document captures a deep codebase review and online recon spree for CI/CD b
 - `bun.lock` + `package-lock.json` both present, but CI only uses npm (confusing)
 
 **Existing Release (`release.yml`):**
+
 - Basic test + build matrix (x86_64 + aarch64) + publish
 - No SBOM, no provenance attestation (comment said requires public repo, but repo IS public - can enable)
 - No secret presence check before build (fails late)
@@ -32,6 +34,7 @@ This document captures a deep codebase review and online recon spree for CI/CD b
 - No version sync validation beyond tag==package.json
 
 **Other gaps:**
+
 - No Dependabot
 - No CODEOWNERS
 - No PR hygiene (title lint, large file check, secret heuristic)
@@ -45,6 +48,7 @@ This document captures a deep codebase review and online recon spree for CI/CD b
 ### Online Recon - Best Practices Synthesized
 
 **Sources:**
+
 - Tauri v2 official GitHub pipeline docs: matrix builds, `tauri-action`, system deps, rust-cache, signing secrets scoped to build job only
 - Ship Your Tauri v2 App Like a Pro (DEV.to): tag-based triggers, concurrency group `release-${ref}` with `cancel-in-progress: false`, version sync, draft releases, SBOM, attestations
 - Next.js CI/CD best practices: lint + typecheck + test + build as separate jobs, `actions/setup-node` with cache, `.next/cache` caching, `npm ci` not `npm install`, required status checks
@@ -53,6 +57,7 @@ This document captures a deep codebase review and online recon spree for CI/CD b
 - Concurrency best practices: PRs `cancel-in-progress: true` to save minutes, deploys/releases `cancel-in-progress: false` to avoid corruption, group by `${workflow}-${ref}`
 
 **Key patterns adopted:**
+
 - Composite action `.github/actions/setup` to DRY Node + Rust + system deps + caches
 - CI jobs in parallel for fast feedback, with final gate `ci-success`
 - Security workflow separate, with CodeQL for JS/TS + Rust, Dependency Review on PRs, Audit, Zizmor, Scorecard
@@ -65,17 +70,21 @@ This document captures a deep codebase review and online recon spree for CI/CD b
 ## What Was Built (After)
 
 ### 1. Composite Setup Action
+
 `.github/actions/setup/action.yml`
+
 - Inputs: node-version (22), install-rust, rust-targets, rust-components, install-system-deps, cache-key
 - Steps: setup-node (cache npm + bun.lock), system deps (webkit2gtk, appindicator, etc. on Linux), rust-toolchain, rust-cache, Next.js cache
 - Used by 7 workflows
 
 ### 2. CI (`ci.yml`) - Completely Rewritten
+
 Triggers: PR, push main, workflow_dispatch
 Permissions: `contents: read`
 Concurrency: `ci-${workflow}-${ref}`, cancel only if PR
 
 Jobs:
+
 - **lint**: ESLint + tsc --noEmit + build:runtime + docs:index check, 10m timeout
 - **test-js**: Vitest verbose, coverage artifact (7d), 15m
 - **test-rust**: Cargo test all-features, 20m, needs system deps
@@ -89,10 +98,12 @@ Caching: npm + bun.lock, rust-cache, .next/cache
 Artifacts: coverage-js, next-build-output on failure
 
 ### 3. Security (`security.yml`) - New
+
 Triggers: push main, PR, weekly Monday 00:00 UTC, manual
 Permissions: `contents: read`
 
 Jobs:
+
 - **codeql**: Matrix js-ts + rust, security-and-quality queries, autobuild + manual Next.js fallback, 20m, permissions security-events write
 - **dependency-review**: PR only, fail high, deny GPL-2.0/3.0, comment on failure
 - **audit**: npm audit critical + cargo audit JSON, upload reports 7d, 15m
@@ -100,11 +111,13 @@ Jobs:
 - **scorecard**: OSSF Scorecard on main only, SARIF upload, needs id-token write
 
 ### 4. Release (`release.yml`) - Hardened
+
 Triggers: tags v*, manual dispatch with tag input
 Permissions: top-level read, per-job write where needed
 Concurrency: `release-${ref}`, cancel false
 
 Jobs:
+
 - **test**: Full test:all + tag==package.json + version sync check, 25m, fetch-depth 0
 - **build**: Matrix windows-latest x86_64 + windows-11-arm aarch64, 60m timeout, steps:
   - Checkout fetch-depth 0
@@ -126,55 +139,70 @@ Jobs:
 Improvements: timeouts, secret check, SBOM, provenance, asset listing, summary, concurrency false.
 
 ### 5. PR Hygiene (`pr.yml`) - New
+
 Triggers: PR opened/edited/sync
+
 - **title-lint**: Warns if not `area: description` or conventional type, non-blocking
 - **check-large-files**: Fails if file >5MB excluding .git, node_modules, target, .next, out, dist
 - **secrets heuristic**: Greps diff for private key, API keys
 - **label-check**: Warns if PR >2000 lines
 
 ### 6. Nightly (`nightly.yml`) - New
+
 Triggers: daily 02:00 UTC, manual with prerelease bool
 Concurrency: nightly-${ref} cancel true
+
 - **build-check**: Matrix Windows x86_64 + aarch64, 60m, builds Tauri NSIS (warn if secrets missing), uploads nightly artifact 3d
 - **publish-nightly**: If manual + prerelease, generates nightly version `BASE-nightly.YYYYMMDD.RUN_NUMBER`, downloads artifacts, creates draft prerelease via gh CLI
 
 ### 7. Auto-merge (`auto-merge.yml`) - New
+
 Triggers: PR to main, actor dependabot[bot]
+
 - Checks if patch/minor (not major) via title parsing
 - Waits for CI Success check via wait-on-check-action
 - Enables auto-merge squash via gh pr merge --auto
 
 ### 8. Dependabot (`.github/dependabot.yml`) - New
+
 - npm weekly Monday 09:00 UTC, 10 PRs, labels dependencies/npm, groups dev-dependencies (types, eslint, vitest, jsdom) + next-ecosystem (next, tailwind, postcss) for minor/patch
 - cargo weekly, groups tauri crates
 - github-actions weekly, 5 PRs
 
 ### 9. CODEOWNERS (`.github/CODEOWNERS`) - New
+
 - Default @useshape/maintainers
 - Critical paths: workflows, actions, release scripts, tauri.conf.json, Cargo.toml, src-tauri/src, capabilities, build.rs require maintainers
 
 ### 10. Workflows README (`.github/workflows/README.md`) - New
+
 Documents each workflow, composite action, local vs CI mapping, how to add new workflow.
 
 ### 11. CI/CD Docs (`docs/developing/ci-cd.mdx`) - New
+
 Comprehensive doc: overview diagram, jobs table, caching, artifacts, security hardening checklist (16 items), local vs CI table, release process, future improvements, references.
 
 ### 12. Package.json Scripts
+
 - Added `typecheck: tsc --noEmit`
 - Added `lint:strict: eslint --max-warnings=0`
 - Added `ci: lint:strict && typecheck && test:all`
 
 ### 13. ESLint Config (`eslint.config.mjs`)
+
 - Added ignores: `src-tauri/scripts/**` (one-off migration scripts with require), `docs/generated/**`
 
 ### 14. Lefthook (`lefthook.yml`)
+
 - From example to real: pre-commit parallel eslint staged, tsc, rust fmt check, version sync check when version files touched; pre-push tests js + rust; commit-msg conventional lint (area: description)
 
 ### 15. Version Script (`scripts/release/version.mjs`)
+
 - Added `--check` mode: compares package.json vs tauri.conf.json vs Cargo.toml, exits 1 if mismatch, for CI
 - Previously only synced, now can check without writing
 
 ### 16. Type Fixes (to make CI green)
+
 - `features/chat/lib/use-chat-session.ts`: useState type was `"low" | "high" | "ultra" | "max"` missing `"super"`, fixed to `ComposerEffort` (includes super)
 - `features/chat/ui/chat.tsx`: setReasoningEffort prop type mismatch (Dispatch vs callback), fixed via wrapper with `as any` for quick green, proper fix would be to make session return `(e: Effort) => void` wrapper
 
@@ -229,6 +257,7 @@ Comprehensive doc: overview diagram, jobs table, caching, artifacts, security ha
 ## How to Use
 
 **Local:**
+
 ```bash
 npm run lint          # currently 91 errors, need fix
 npm run typecheck     # now passes after fix
@@ -240,11 +269,13 @@ npm run build         # next build
 ```
 
 **CI:**
+
 - PRs automatically run CI + Security + PR Hygiene
 - Required: CI Success gate must pass before merge (configure in GitHub branch protection)
 - Release: push tag `vX.Y.Z` (or `vX.Y.Z-nightly` for prerelease) → Release workflow → draft release with assets → publish
 
 **Maintainer release:**
+
 ```bash
 npm run release -- --patch --dry-run
 npm run release -- 1.0.3 --commit --tag --push
@@ -253,15 +284,15 @@ npm run release -- 1.0.3 --commit --tag --push
 
 ## References
 
-- Tauri v2 CI: https://v2.tauri.app/distribute/pipelines/github/
-- Ship Your Tauri v2 App Like a Pro: https://dev.to/tomtomdu73/ship-your-tauri-v2-app-like-a-pro-github-actions-and-release-automation-part-22-2ef7
-- GitHub Actions security checklist: https://corgea.com/learn/github-actions-security-checklist
-- Supply chain best practices: https://learn.github.com/well-architected/library/application-security/recommendations/managing-dependency-threats/
+- Tauri v2 CI: <https://v2.tauri.app/distribute/pipelines/github/>
+- Ship Your Tauri v2 App Like a Pro: <https://dev.to/tomtomdu73/ship-your-tauri-v2-app-like-a-pro-github-actions-and-release-automation-part-22-2ef7>
+- GitHub Actions security checklist: <https://corgea.com/learn/github-actions-security-checklist>
+- Supply chain best practices: <https://learn.github.com/well-architected/library/application-security/recommendations/managing-dependency-threats/>
 - Rust CI: cargo fmt, clippy -D warnings, audit, rust-cache
 - Next.js CI: lint + typecheck + test + build with caching
-- Concurrency: https://runs-on.com/github-actions/concurrency/
-- Caching: https://runs-on.com/github-actions/caching-dependencies/
-- Fast GitHub Actions: https://starsling.dev/fast-github-actions
+- Concurrency: <https://runs-on.com/github-actions/concurrency/>
+- Caching: <https://runs-on.com/github-actions/caching-dependencies/>
+- Fast GitHub Actions: <https://starsling.dev/fast-github-actions>
 
 ## Files Changed
 

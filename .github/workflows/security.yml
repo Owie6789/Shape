@@ -122,9 +122,9 @@ jobs:
 
       - name: cargo audit
         run: |
-          cargo audit --json > cargo-audit.json || true
+          cargo audit --file src-tauri/Cargo.lock --json > cargo-audit.json || true
           cat cargo-audit.json | head -n 200
-          cargo audit || echo "::warning::cargo audit found issues"
+          cargo audit --file src-tauri/Cargo.lock || echo "::warning::cargo audit found issues"
 
       - name: Upload audit reports
         if: always()
