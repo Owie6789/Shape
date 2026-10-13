@@ -280,10 +280,23 @@ export function useChatSession() {
                             clearAllDesignPreviewSessions();
                             setContextSummarized(false);
                         }
-                    } catch {
-                        // Ephemeral / deleted tabs — fall back to a draft quietly.
-                        if (!cancelled) {
+                    } catch (err) {
+                        if (cancelled) return;
+                        // A tab whose conversation is gone is expected: it was
+                        // ephemeral, or deleted from another window. Drop the
+                        // strip back to a draft.
+                        //
+                        // Anything else is a backend failure, and the saved tabs
+                        // are still good. Keep them and move the active tab to a
+                        // draft, rather than throwing away the session strip
+                        // because one conversation could not be read.
+                        const missing =
+                            String(err).includes("Conversation not found");
+                        if (missing) {
                             setOpenChatTabs([{ id: NEW_CHAT_TAB_ID, title: "New Chat" }]);
+                            setActiveChatTabId(NEW_CHAT_TAB_ID);
+                        } else {
+                            console.error("Could not restore conversation", activeId, err);
                             setActiveChatTabId(NEW_CHAT_TAB_ID);
                         }
                     }
