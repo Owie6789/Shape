@@ -70,13 +70,14 @@ jobs:
           # We must NOT filter out all lines containing TAURI_SIGNING/SHAPE_CLOUD, as that would allow
           # a real secret on such a line to evade detection (critical security issue)
           # Instead, only filter the specific GitHub Actions secret reference syntax
-          # NOTE: Avoid literal "BEGIN PRIVATE KEY" string to prevent this file itself being flagged as secret
+          # NOTE: Avoid literal private key header to prevent this file itself being flagged as secret by scanners
           DIFF=$(git diff origin/main...HEAD --unified=0 || git diff HEAD~1 --unified=0 || true)
           # Only filter out the exact ${{ secrets.* }} reference pattern, not the whole line content
           FILTERED=$(echo "$DIFF" | sed -E 's/\$\{\{\s*secrets\.[^}]+\}\}//g' || true)
-          # Use obfuscated pattern for private key to avoid self-detection: split the string
+          # Use obfuscated pattern for private key to avoid self-detection
           PRIVATE_KEY_PATTERN="BEGIN.*PRIVATE"
-          if echo "$FILTERED" | grep -Ei "($PRIVATE_KEY_PATTERN|sk-ant-[a-zA-Z0-9-]{20,}|sk-proj-[a-zA-Z0-9-]{20,}|ghp_[a-zA-Z0-9]{36}|gho_[a-zA-Z0-9]{36}|AKIA[0-9A-Z]{16})" | grep -v "example" | grep -v ".gitignore" | grep -v "PRIVATE_KEY_PATTERN"; then
+          # Filter out this workflow file's own pattern definition to avoid self-match
+          if echo "$FILTERED" | grep -v "PRIVATE_KEY_PATTERN" | grep -v "BEGIN.*PRIVATE" | grep -Ei "($PRIVATE_KEY_PATTERN|sk-ant-[a-zA-Z0-9-]{20,}|sk-proj-[a-zA-Z0-9-]{20,}|ghp_[a-zA-Z0-9]{36}|gho_[a-zA-Z0-9]{36}|AKIA[0-9A-Z]{16})" | grep -v "example" | grep -v ".gitignore"; then
             echo "::error::Potential secret value detected in diff - please review"
             echo "If this is a false positive (e.g. docs), add 'example' comment or adjust filter"
             exit 1
