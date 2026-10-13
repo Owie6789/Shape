@@ -103,11 +103,6 @@
   "devDependencies": {
     "@iconify-json/vscode-icons": "^1.2.83",
     "@iconify/utils": "^3.1.7",
-    "@rustbin/cargo-1.88.0-x86_64-unknown-linux-gnu": "^0.89.0",
-    "@rustbin/clippy-1.88.0-x86_64-unknown-linux-gnu": "^0.1.88",
-    "@rustbin/rustc-1.88.0-x86_64-unknown-linux-gnu": "^1.88.0",
-    "@rustbin/rustfmt-1.88.0-x86_64-unknown-linux-gnu": "^1.8.0",
-    "@scalar/rust-fmt": "^0.3.0",
     "@tailwindcss/postcss": "^4",
     "@tauri-apps/cli": "^2.10.0",
     "@types/diff": "^7.0.2",

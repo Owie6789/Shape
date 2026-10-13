@@ -83,7 +83,7 @@ jobs:
         run: |
           set -euo pipefail
           # Skip build if secrets missing (nightly placeholder case) - but don't hide real failures
-          if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ] || [ -z "${SHAPE_CLOUD_BUILD_SECRET:-}" ]; then
+          if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ] || [ -z "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" ] || [ -z "${SHAPE_CLOUD_BUILD_SECRET:-}" ]; then
             echo "::warning::Secrets missing, skipping nightly build (expected for forks without secrets)"
             mkdir -p dist/nightly-placeholder
             echo "No secrets - build skipped" > dist/nightly-placeholder/README.txt
