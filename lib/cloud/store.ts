@@ -482,6 +482,10 @@ function revalidateIfStale() {
 async function applyToken(token: string | null, allowRefresh = true) {
   const generation = sessionGeneration;
   if (!token) {
+    // Ending the session invalidates in-flight account fetches. This also covers
+    // a sign-out that started in another Shape window: that one bumps its own
+    // counter, and this window only finds out through applyToken(null).
+    sessionGeneration += 1;
     clearShapeCatalog();
     saveCachedProfile(null);
     saveRefresh(null);

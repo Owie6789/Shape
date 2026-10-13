@@ -242,6 +242,45 @@ describe("cloud usage store fast path", () => {
         expect(getShapeAuthState().accessToken).toBeNull();
     });
 
+    it("ignores an in-flight fetch when another window ends the session", async () => {
+        await signIn();
+
+        let release: (() => void) | null = null;
+        let accountStarted = false;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (input: RequestInfo | URL) => {
+                const url = String(input);
+                if (/\/api\/account(?!\/)/.test(url)) {
+                    accountStarted = true;
+                    await gate;
+                    return jsonReply(ACCOUNT);
+                }
+                return jsonReply({});
+            }),
+        );
+
+        const inFlight = refreshShapeAuth();
+        await vi.waitFor(() => expect(accountStarted).toBe(true));
+
+        // A second Shape window signs out. This window never calls logoutShape();
+        // it only sees the dropped token plus the broadcast, so the in-flight
+        // request above was captured against the old session.
+        localStorage.removeItem("shape-auth-token");
+        window.dispatchEvent(new CustomEvent("shape-auth-changed"));
+        await vi.waitFor(() => expect(getShapeAuthState().loggedIn).toBe(false));
+
+        release?.();
+        await inFlight;
+
+        expect(getShapeAuthState().loggedIn).toBe(false);
+        expect(getShapeAuthState().creditsRemaining).toBe(0);
+        expect(getShapeAuthState().email).toBeNull();
+    });
+
     it("rebroadcasts a snapshot it produced itself so other windows catch up", async () => {
         await signIn();
         const { seen, restore } = watchUsageBroadcasts();
