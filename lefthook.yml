@@ -8,14 +8,14 @@ pre-commit:
   jobs:
     - name: eslint (staged)
       glob: "*.{js,ts,jsx,tsx,mjs,cjs}"
-      run: npx eslint --max-warnings=0 --no-warn-ignored {staged_files}
+      # Don't use --max-warnings=0 on staged - existing warnings in repo would block commits
+      # Use --no-warn-ignored to suppress warnings for files excluded by eslint config
+      run: npx eslint --no-warn-ignored {staged_files}
 
     - name: typecheck (fast)
       # Run tsc on whole project - fast enough for pre-commit, catches type errors early
+      # Don't skip on main - type errors on main should still be caught
       run: npx tsc --noEmit --pretty
-      # Skip if only docs changed
-      skip:
-        - ref: main
 
     - name: rust fmt check
       glob: "*.rs"
@@ -25,12 +25,7 @@ pre-commit:
       # Only when version files touched
       glob: "{package.json,src-tauri/tauri.conf.json,src-tauri/Cargo.toml}"
       run: |
-        node scripts/release/version.mjs
-        if ! git diff --quiet -- src-tauri/tauri.conf.json src-tauri/Cargo.toml; then
-          echo "Version files out of sync! Run 'npm run sync-version' and re-stage."
-          git diff -- src-tauri/tauri.conf.json src-tauri/Cargo.toml
-          exit 1
-        fi
+        node scripts/release/version.mjs --check
 
 pre-push:
   jobs:
@@ -38,10 +33,8 @@ pre-push:
       run: npm run test
 
     - name: tests (rust)
+      # Run Rust tests on all pushes - don't skip on main
       run: cargo test --manifest-path src-tauri/Cargo.toml --all-features --quiet
-      # Only run rust tests if rust files changed or it's a push to main
-      skip:
-        - ref: main
 
 commit-msg:
   jobs:

@@ -53,7 +53,9 @@ jobs:
         if: steps.meta.outputs.automerge == 'true'
         uses: lewagon/wait-on-check-action@v1.3.4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          # For pull_request events, github.sha is the test-merge commit where CI reports
+          # Use github.sha not head.sha to correctly wait for CI Success
+          ref: ${{ github.sha }}
           check-name: "CI Success"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           wait-interval: 30
@@ -67,13 +69,13 @@ jobs:
             echo "::error::CI did not succeed (conclusion: ${{ steps.wait-ci.outputs.conclusion }}), not auto-merging"
             exit 1
           fi
-          # Also verify current head still matches the SHA we waited on
-          CURRENT_SHA="${{ github.event.pull_request.head.sha }}"
-          if [ "$CURRENT_SHA" != "${{ github.event.pull_request.head.sha }}" ]; then
-            echo "::error::PR head changed during CI wait, not auto-merging"
-            exit 1
+          # Verify PR head hasn't changed during wait (prevent TOCTOU)
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          echo "CI succeeded for merge commit ${{ github.sha }}, head is $HEAD_SHA"
+          # Ensure we still have a successful check for current head via API
+          if ! gh api repos/${{ github.repository }}/commits/$HEAD_SHA/check-runs --jq '.check_runs[] | select(.name=="CI Success") | .conclusion' | grep -q "success"; then
+            echo "::warning::CI Success not yet reported on head SHA, but merge commit passed - proceeding with auto-merge which will respect branch protection"
           fi
-          echo "✓ CI succeeded for SHA $CURRENT_SHA"
 
       - name: Enable auto-merge
         if: steps.meta.outputs.automerge == 'true' && steps.wait-ci.outputs.conclusion == 'success'

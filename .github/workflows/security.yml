@@ -104,8 +104,10 @@ jobs:
 
       - name: npm audit (high and above)
         run: |
+          set -o pipefail
           npm audit --audit-level=high --json > npm-audit.json || true
-          cat npm-audit.json | head -n 200
+          # Use cat with || true to avoid SIGPIPE when head closes pipe
+          cat npm-audit.json 2>/dev/null | head -n 200 || true
           # Fail only on high/critical if you want strict:
           # npm audit --audit-level=high
           # For now, warn but don't block PRs unless critical
@@ -123,8 +125,9 @@ jobs:
 
       - name: cargo audit
         run: |
+          set -o pipefail
           cargo audit --file src-tauri/Cargo.lock --json > cargo-audit.json || true
-          cat cargo-audit.json | head -n 200
+          cat cargo-audit.json 2>/dev/null | head -n 200 || true
           cargo audit --file src-tauri/Cargo.lock || echo "::warning::cargo audit found issues"
 
       - name: Upload audit reports

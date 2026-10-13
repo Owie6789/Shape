@@ -156,14 +156,13 @@ jobs:
           retention-days: 14
           compression-level: 6
 
-      # Optional: SBOM generation for supply-chain transparency
+      # SBOM generation for supply-chain transparency - best effort but warn if fails
       - name: Generate SBOM (CycloneDX)
         uses: anchore/sbom-action@v0
         with:
           path: dist/release/
           format: cyclonedx-json
           output-file: dist/release/sbom-${{ matrix.arch }}.cyclonedx.json
-        continue-on-error: true
 
       - name: Upload SBOM
         if: always()
@@ -171,7 +170,7 @@ jobs:
         with:
           name: sbom-${{ matrix.arch }}
           path: dist/release/sbom-${{ matrix.arch }}.cyclonedx.json
-          if-no-files-found: ignore
+          if-no-files-found: warn
           retention-days: 14
 
   # ─────────────────────────────────────────────────────────
@@ -208,23 +207,54 @@ jobs:
       - name: List downloaded assets
         run: ls -lhR dist/release
 
+      - name: Resolve release tag
+        id: release-tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          # For push tags, use GITHUB_REF_NAME. For manual dispatch, use input tag if provided
+          if [ -n "${INPUT_TAG:-}" ]; then
+            TAG="$INPUT_TAG"
+            echo "Using input tag: $TAG"
+          else
+            TAG="${GITHUB_REF_NAME}"
+            echo "Using ref name: $TAG"
+          fi
+          # Validate tag format
+          if ! echo "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$'; then
+            echo "::error::Invalid tag format: $TAG (expected vX.Y.Z or vX.Y.Z-prerelease)"
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
       - name: Previous tag
         id: prev
+        env:
+          RELEASE_TAG: ${{ steps.release-tag.outputs.tag }}
         run: |
-          PREV=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
+          set -euo pipefail
+          # Find previous tag before the release tag
+          if [ -n "${RELEASE_TAG:-}" ] && git rev-parse --verify "$RELEASE_TAG" >/dev/null 2>&1; then
+            PREV=$(git describe --tags --abbrev=0 "$RELEASE_TAG^" 2>/dev/null || git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
+          else
+            PREV=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
+          fi
           echo "tag=$PREV" >> "$GITHUB_OUTPUT"
           echo "Previous tag: $PREV"
 
       - name: Detect prerelease
         id: meta
+        env:
+          RELEASE_TAG: ${{ steps.release-tag.outputs.tag }}
         run: |
           # Stable tags are vX.Y.Z. Nightly tags are hyphenated (vX.Y.Z-nightly) and publish as GitHub prereleases.
-          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then
+          if [[ "$RELEASE_TAG" == *-* ]]; then
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
-            echo "Prerelease detected: ${GITHUB_REF_NAME}"
+            echo "Prerelease detected: $RELEASE_TAG"
           else
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
-            echo "Stable release: ${GITHUB_REF_NAME}"
+            echo "Stable release: $RELEASE_TAG"
           fi
 
       - name: Generate release notes
@@ -252,19 +282,19 @@ jobs:
           cat release-notes.md
 
       # Build provenance attestation (SLSA) - requires public repo, which Shape is.
-      # This gives consumers cryptographic proof of build origin.
+      # This gives consumers cryptographic proof of build origin. Must not be optional.
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: "dist/release/*"
-        continue-on-error: true
 
       - name: Publish release (with retries)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.release-tag.outputs.tag }}
         run: |
           set -euo pipefail
-          ARGS=(--tag "${GITHUB_REF_NAME}" --dir dist/release --notes-file release-notes.md --publish)
+          ARGS=(--tag "$RELEASE_TAG" --dir dist/release --notes-file release-notes.md --publish)
           if [ "${{ steps.meta.outputs.prerelease }}" = "true" ]; then
             ARGS+=(--prerelease)
           fi
@@ -273,9 +303,11 @@ jobs:
           node scripts/release/upload.mjs "${ARGS[@]}"
 
       - name: Summary
+        env:
+          RELEASE_TAG: ${{ steps.release-tag.outputs.tag }}
         run: |
           {
-            echo "## Release ${{ github.ref_name }} published :rocket:"
+            echo "## Release $RELEASE_TAG published :rocket:"
             echo ""
             echo "Artifacts:"
             find dist/release -type f -exec ls -lh {} \; | awk '{print "- " $9 " (" $5 ")"}' || true
