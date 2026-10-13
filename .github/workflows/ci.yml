@@ -165,15 +165,41 @@ jobs:
           retention-days: 3
 
       - name: Cargo clippy (deny warnings)
+        id: clippy
         run: |
           set -o pipefail
+          set +e
           cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings 2>&1 | tee clippy-check.txt
           STATUS=${PIPESTATUS[0]}
-          if [ $STATUS -ne 0 ]; then
-            echo "::error::Clippy found warnings - must be fixed"
-            cat clippy-check.txt | tail -n 100
-            exit $STATUS
-          fi
+          echo "Clippy exit: $STATUS"
+          # Save status for next step
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          # Show summary
+          cat clippy-check.txt | tail -n 200
+          # Exit with status to fail job if warnings
+          exit $STATUS
+
+      - name: Comment clippy results on PR
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let log = '';
+            try {
+              log = fs.readFileSync('clippy-check.txt', 'utf8');
+            } catch (e) {
+              log = 'Failed to read clippy-check.txt';
+            }
+            // Truncate to avoid too large comment
+            const truncated = log.slice(0, 60000);
+            const body = `### 🔴 Clippy Check Failed\n\nClippy found warnings that must be fixed:\n\n\`\`\`\n${truncated}\n\`\`\`\n\nPlease run \`cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings\` locally and fix.`;
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: body
+            });
 
       - name: Upload clippy log on failure
         if: failure()
