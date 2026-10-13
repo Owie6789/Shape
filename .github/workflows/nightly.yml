@@ -54,6 +54,10 @@ jobs:
           NIGHTLY="${BASE}-nightly.$(date +%Y%m%d).${GITHUB_RUN_NUMBER}"
           echo "version=$NIGHTLY" >> "$GITHUB_OUTPUT"
           echo "Nightly version: $NIGHTLY"
+          # Save version to file for publish job to use (avoids midnight crossing mismatch)
+          mkdir -p dist
+          echo "$NIGHTLY" > dist/version.txt
+          echo "$NIGHTLY" > dist/nightly-version.txt
           # Set package.json to nightly version so installers embed correct version
           node -e "
             const fs=require('fs');
@@ -139,19 +143,32 @@ jobs:
 
       - run: npm ci
 
-      - name: Generate nightly version
-        id: version
-        run: |
-          BASE=$(node -p "require('./package.json').version")
-          NIGHTLY="${BASE}-nightly.$(date +%Y%m%d).${GITHUB_RUN_NUMBER}"
-          echo "version=$NIGHTLY" >> "$GITHUB_OUTPUT"
-          echo "Nightly version: $NIGHTLY"
-
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist/nightly
           merge-multiple: true
+
+      - name: Determine nightly version from artifacts
+        id: version
+        run: |
+          set -euo pipefail
+          # Try to extract version from built artifacts or package.json
+          # Don't recompute date here - use the version that was embedded in installers during build
+          # Build artifacts should contain version info, or we fallback to package.json + date
+          # For safety, we check if any installer contains nightly version, or use build-check output
+          BASE=$(node -p "require('./package.json').version")
+          # If we have a version file from build, use it; otherwise generate but warn about midnight crossing
+          if [ -f "dist/nightly/version.txt" ]; then
+            NIGHTLY=$(cat dist/nightly/version.txt)
+            echo "Using version from artifact: $NIGHTLY"
+          else
+            # Fallback: use date, but this could differ from installer version if crossing midnight
+            NIGHTLY="${BASE}-nightly.$(date +%Y%m%d).${GITHUB_RUN_NUMBER}"
+            echo "::warning::No version.txt in artifacts, using recomputed version $NIGHTLY - may differ if crossing midnight"
+          fi
+          echo "version=$NIGHTLY" >> "$GITHUB_OUTPUT"
+          echo "Nightly version: $NIGHTLY"
 
       - name: List artifacts
         run: |
@@ -174,9 +191,10 @@ jobs:
             echo "No artifacts to publish - skipping"
             exit 0
           fi
-          # Ensure we have actual installers
+          # Ensure we have actual installers (recursive search, not just top-level)
           if ! find dist/nightly -name "*.exe" | grep -q .; then
             echo "::error::No exe installers found in artifacts"
+            find dist/nightly -type f | head -n 20 || true
             exit 1
           fi
           TAG="v${{ steps.version.outputs.version }}"
@@ -184,6 +202,13 @@ jobs:
             echo "Release $TAG already exists - skipping"
             exit 0
           fi
+          # Use recursive glob to find installers in nested directories (artifacts retain structure)
+          mapfile -t EXES < <(find dist/nightly -name "*.exe" -type f)
+          if [ ${#EXES[@]} -eq 0 ]; then
+            echo "::error::No exe files found"
+            exit 1
+          fi
+          echo "Found ${#EXES[@]} exe files: ${EXES[*]}"
           gh release create "$TAG" \
             --target "${{ github.sha }}" \
             --repo "${{ github.repository }}" \
@@ -191,4 +216,4 @@ jobs:
             --notes "Automated nightly build from ${{ github.sha }}. Not for production use." \
             --prerelease \
             --draft \
-            dist/nightly/*.exe
+            "${EXES[@]}"

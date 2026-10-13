@@ -34,9 +34,17 @@ jobs:
             echo "From: $FROM"
             echo "To: $TO"
             FROM_MAJOR=$(echo "$FROM" | cut -d' ' -f1)
+            FROM_MINOR=$(echo "$FROM" | cut -d' ' -f2)
             TO_MAJOR=$(echo "$TO" | cut -d' ' -f1)
+            TO_MINOR=$(echo "$TO" | cut -d' ' -f2)
             if [ "$FROM_MAJOR" != "$TO_MAJOR" ]; then
               echo "Major version bump detected - requires manual review"
+              echo "automerge=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            # For 0.x, minor bump is breaking per semver (0.3.0 -> 0.4.0 can be breaking)
+            if [ "$FROM_MAJOR" = "0" ] && [ "$FROM_MINOR" != "$TO_MINOR" ]; then
+              echo "Breaking 0.x minor bump detected (0.$FROM_MINOR -> 0.$TO_MINOR) - requires manual review"
               echo "automerge=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi

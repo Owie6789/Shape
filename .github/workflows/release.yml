@@ -15,7 +15,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  # Use tag name for concurrency group, not ref - so tag-push and branch dispatch for same tag share group and don't race
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -49,26 +50,34 @@ jobs:
         run: npm run test:all
 
       - name: Assert tag matches package.json
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
           # Determine expected tag: GITHUB_REF_NAME for tag push, INPUT_TAG for manual dispatch
+          # Use env var INPUT_TAG to avoid injection via direct ${{ inputs.tag }} expansion in shell
           if [[ "${GITHUB_REF:-}" == refs/tags/* ]]; then
             TAG="${GITHUB_REF_NAME#v}"
             echo "Tag push: $TAG from $GITHUB_REF_NAME"
-          elif [ -n "${{ inputs.tag }}" ]; then
-            TAG="${{ inputs.tag }}"
+          elif [ -n "${INPUT_TAG:-}" ]; then
+            TAG="${INPUT_TAG}"
             TAG="${TAG#v}"
             echo "Manual dispatch with tag input: $TAG"
+            # Validate tag format before using in git commands (prevent injection)
+            if ! echo "$INPUT_TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$'; then
+              echo "::error::Invalid tag format: $INPUT_TAG"
+              exit 1
+            fi
             # Verify the input tag exists as a git tag
-            if ! git rev-parse --verify "refs/tags/${{ inputs.tag }}" >/dev/null 2>&1; then
-              echo "::error::Input tag ${{ inputs.tag }} does not exist as a git tag - refusing to build from branch"
+            if ! git rev-parse --verify "refs/tags/$INPUT_TAG" >/dev/null 2>&1; then
+              echo "::error::Input tag $INPUT_TAG does not exist as a git tag - refusing to build from branch"
               exit 1
             fi
             # Verify HEAD is actually the tagged commit (or the tag points to HEAD)
-            TAG_COMMIT=$(git rev-list -n 1 "refs/tags/${{ inputs.tag }}" 2>/dev/null || true)
+            TAG_COMMIT=$(git rev-list -n 1 "refs/tags/$INPUT_TAG" 2>/dev/null || true)
             HEAD_COMMIT=$(git rev-parse HEAD)
             if [ "$TAG_COMMIT" != "$HEAD_COMMIT" ]; then
-              echo "::error::Manual dispatch tag ${{ inputs.tag }} points to $TAG_COMMIT but HEAD is $HEAD_COMMIT"
+              echo "::error::Manual dispatch tag $INPUT_TAG points to $TAG_COMMIT but HEAD is $HEAD_COMMIT"
               echo "To release a tag, dispatch the workflow from that tag, not from a branch"
               echo "Or ensure you are on the tagged commit"
               exit 1
