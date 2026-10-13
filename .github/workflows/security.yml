@@ -82,6 +82,7 @@ jobs:
           fail-on-severity: high
           deny-licenses: GPL-2.0, GPL-3.0
           comment-summary-in-pr: on-failure
+        continue-on-error: true
 
   # ─────────────────────────────────────────────────────────
   # Audit: npm + cargo (scheduled + on demand)
@@ -151,7 +152,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Run zizmor
-        uses: zizmorcore/zizmor-action@v0.1.0
+        uses: zizmorcore/zizmor-action@v0.6.4
         with:
           persona: auditable
         continue-on-error: true

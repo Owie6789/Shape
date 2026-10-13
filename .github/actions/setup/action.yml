@@ -35,9 +35,7 @@ runs:
       with:
         node-version: ${{ inputs.node-version }}
         cache: npm
-        cache-dependency-path: |
-          package-lock.json
-          bun.lock
+        cache-dependency-path: package-lock.json
 
     - name: Install system dependencies (Linux)
       if: ${{ inputs.install-system-deps == 'true' && runner.os == 'Linux' }}
@@ -48,10 +46,7 @@ runs:
           libwebkit2gtk-4.1-dev \
           libappindicator3-dev \
           librsvg2-dev \
-          patchelf \
-          libfuse2 \
-          libgtk-3-dev \
-          libayatana-appindicator3-dev
+          patchelf
 
     - name: Install Rust toolchain
       if: ${{ inputs.install-rust == 'true' }}
@@ -66,13 +61,13 @@ runs:
       with:
         workspaces: src-tauri -> target
         key: ${{ inputs.cache-key }}
+        save-if: ${{ github.event_name != 'pull_request' || true }}
 
     - name: Cache Next.js
       uses: actions/cache@v4
       with:
-        path: |
-          .next/cache
-        key: ${{ runner.os }}-nextjs-${{ hashFiles('**/package-lock.json') }}-${{ hashFiles('**/package.json') }}
+        path: .next/cache
+        key: ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-${{ inputs.cache-key }}
         restore-keys: |
-          ${{ runner.os }}-nextjs-${{ hashFiles('**/package-lock.json') }}-
+          ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-
           ${{ runner.os }}-nextjs-
