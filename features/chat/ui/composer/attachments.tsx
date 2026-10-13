@@ -3,7 +3,6 @@
 import { Camera20Filled } from "@fluentui/react-icons/headless/svg/camera";
 import { Code20Regular } from "@fluentui/react-icons/headless/svg/code";
 import { Dismiss20Regular } from "@fluentui/react-icons/headless/svg/dismiss";
-import { Document20Regular } from "@fluentui/react-icons/headless/svg/document";
 import { Options20Regular } from "@fluentui/react-icons/headless/svg/options";
 import { WindowConsole20Regular } from "@fluentui/react-icons/headless/svg/window-console";
 

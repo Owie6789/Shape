@@ -148,14 +148,21 @@ export function ProjectQuickPick({
     const [step, setStep] = useState<PickStep>(initialStep);
     const [cloneKind, setCloneKind] = useState<CloneKind>("github");
     const [query, setQuery] = useState("");
+    // Recents are re-read each time the picker opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `open` is the refresh trigger
     const recents = useMemo(() => loadRepoHistory().slice(0, 12), [open]);
 
-    useEffect(() => {
-        if (!open) return;
-        setStep(initialStep);
-        setQuery("");
-        setCloneKind("github");
-    }, [open, initialStep]);
+    // Each time the picker opens (or its starting step changes while open), start afresh.
+    const resetKey = open ? initialStep : null;
+    const [seenResetKey, setSeenResetKey] = useState(resetKey);
+    if (resetKey !== seenResetKey) {
+        setSeenResetKey(resetKey);
+        if (resetKey) {
+            setStep(resetKey);
+            setQuery("");
+            setCloneKind("github");
+        }
+    }
 
     const close = () => {
         setStep("projects");

@@ -68,7 +68,6 @@ describe("buildReactSandboxHtml", () => {
 
 async function runPreviewReadyScript(script: string) {
     const trimmed = script.trim().replace(/;\s*$/, "");
-    // eslint-disable-next-line no-new-func
     await new Function(`return ${trimmed}`)();
 }
 

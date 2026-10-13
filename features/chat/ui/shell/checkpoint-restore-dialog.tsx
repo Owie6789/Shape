@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
     AlertDialog,
@@ -51,6 +51,18 @@ export function CheckpointRestoreDialog() {
         };
     }, []);
 
+    const finish = useCallback((ok: boolean) => {
+        if (ok && dontAsk) {
+            updateSettingSection("privacy", { skipCheckpointRestoreConfirm: true });
+        }
+        const p = pending;
+        pending = null;
+        setOpen(false);
+        setDontAsk(false);
+        notifyListeners();
+        p?.resolve(ok);
+    }, [dontAsk]);
+
     useEffect(() => {
         if (!open) return;
         const onKey = (e: KeyboardEvent) => {
@@ -62,19 +74,8 @@ export function CheckpointRestoreDialog() {
         };
         window.addEventListener("keydown", onKey, true);
         return () => window.removeEventListener("keydown", onKey, true);
-    }, [open, dontAsk]);
+    }, [open, dontAsk, finish]);
 
-    const finish = (ok: boolean) => {
-        if (ok && dontAsk) {
-            updateSettingSection("privacy", { skipCheckpointRestoreConfirm: true });
-        }
-        const p = pending;
-        pending = null;
-        setOpen(false);
-        setDontAsk(false);
-        notifyListeners();
-        p?.resolve(ok);
-    };
 
     return (
         <AlertDialog open={open} onOpenChange={(v) => { if (!v) finish(false); }}>

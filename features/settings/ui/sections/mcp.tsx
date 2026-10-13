@@ -374,9 +374,23 @@ export function McpSettingsView() {
         }
     }, []);
 
+    // Initial load. Written inline so the effect does not depend on a state-writing callback.
     useEffect(() => {
-        void refresh();
-    }, [refresh]);
+        let cancelled = false;
+        listMcpServers()
+            .then(async (listed) => {
+                if (cancelled) return;
+                setServers(listed);
+                const next = await syncActiveMcpServers();
+                if (!cancelled) setStatuses(next);
+            })
+            .catch((err: unknown) => {
+                if (!cancelled) notify.error(err instanceof Error ? err.message : "Could not load MCP servers.");
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, []);
 
     const filtered = useMemo(() => {
         const q = query.trim().toLowerCase();

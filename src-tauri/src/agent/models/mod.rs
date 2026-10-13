@@ -681,25 +681,6 @@ impl AgentState {
         }
     }
 
-    pub fn generation_state(&self) -> ChatGenerationState {
-        match self.in_flight_snapshot() {
-            Some(f) => ChatGenerationState {
-                is_generating: true,
-                turn_id: Some(f.turn_id),
-                conversation_id: f.conversation_id,
-                partial_content: Some(f.partial_content),
-                activity_label: f.activity_label,
-            },
-            None => ChatGenerationState {
-                is_generating: false,
-                turn_id: None,
-                conversation_id: None,
-                partial_content: None,
-                activity_label: None,
-            },
-        }
-    }
-
     pub fn reset_turn_meter(&self, turn_id: &str) {
         if let Ok(mut meter) = self.turn_meter.lock() {
             meter.insert(turn_id.to_string(), (0, 0));

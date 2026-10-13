@@ -227,11 +227,11 @@ export function useDiffHunkState(
 
   const reload = useCallback(() => setReloadToken((t) => t + 1), []);
 
+  // Without a repo or mode there is nothing to show. Cleared during render, not in an effect.
+  if ((!repoPath || !mode) && hunks.length > 0) setHunks([]);
+
   useEffect(() => {
-    if (!repoPath || !mode) {
-      setHunks([]);
-      return;
-    }
+    if (!repoPath || !mode) return;
     let cancelled = false;
     void commands
       .gitListHunks(repoPath, filePath, mode === "staged")

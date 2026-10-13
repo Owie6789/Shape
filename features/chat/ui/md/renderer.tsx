@@ -1,6 +1,5 @@
 "use client";
 
-import { Document20Regular } from "@fluentui/react-icons/headless/svg/document";
 
 import React, { useEffect, useMemo } from "react";
 import { cn } from "@/lib/utils";
@@ -988,7 +987,6 @@ export function MessageRenderer({
     content,
     isGenerating,
     activityLabel,
-    isFileEditResolved,
     durationMs,
     skipSubagentSync,
 }: {

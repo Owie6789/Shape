@@ -36,14 +36,12 @@ export function LocalTags() {
     const [tags, setTags] = useState<TagEntry[]>([]);
     const [newTagName, setNewTagName] = useState("");
     const [creating, setCreating] = useState(false);
-    const [loading, setLoading] = useState(false);
 
     const refresh = useCallback(async () => {
         if (!gitRepo) {
             setTags([]);
             return;
         }
-        setLoading(true);
         try {
             const list = await commands.gitListTags(gitRepo);
             setTags(list);
@@ -51,7 +49,6 @@ export function LocalTags() {
             setTags([]);
             notify.gitError(err, "Failed to load tags");
         } finally {
-            setLoading(false);
         }
     }, [gitRepo]);
 

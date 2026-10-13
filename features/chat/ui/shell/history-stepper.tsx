@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Tooltip } from "@/components/ui/tooltip";
 
@@ -103,8 +103,10 @@ export function useChatTurnActive(
     const rafRef = useRef(0);
     const activeRef = useRef(0);
     const streamingRef = useRef(!!opts?.streaming);
-    streamingRef.current = !!opts?.streaming;
     const nodesCache = useRef<HTMLElement[]>([]);
+    useEffect(() => {
+        streamingRef.current = !!opts?.streaming;
+    });
 
     useEffect(() => {
         setActive((prev) => {
@@ -208,20 +210,18 @@ export function useChatTurnActive(
         };
     }, [scrollRoot, turnCount]);
 
-    const select = useCallback(
-        (index: number) => {
-            const root = scrollRoot.current;
-            if (!root) return;
-            const clamped = Math.max(0, Math.min(turnCount - 1, index));
-            const el = root.querySelector<HTMLElement>(`[data-chat-turn="${clamped}"]`);
-            if (!el) return;
-            lockUntil.current = Date.now() + LOCK_MS;
-            activeRef.current = clamped;
-            setActive(clamped);
-            el.scrollIntoView({ behavior: "smooth", block: "center" });
-        },
-        [scrollRoot, turnCount],
-    );
+    // Called from event handlers only; it reads the DOM and refs at click time.
+    const select = (index: number) => {
+        const root = scrollRoot.current;
+        if (!root) return;
+        const clamped = Math.max(0, Math.min(turnCount - 1, index));
+        const el = root.querySelector<HTMLElement>(`[data-chat-turn="${clamped}"]`);
+        if (!el) return;
+        lockUntil.current = Date.now() + LOCK_MS;
+        activeRef.current = clamped;
+        setActive(clamped);
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+    };
 
     return [active, select];
 }

@@ -400,30 +400,27 @@ function PluginDetail({
     const mode: AutoRunModeSetting =
         settings.ai.pluginApprovals?.[plugin.toolkit] ?? settings.ai.pluginApprovalDefault ?? "ask";
     const disabled = new Set(settings.ai.pluginDisabledActions?.[plugin.toolkit] ?? []);
-    const [tools, setTools] = useState<PluginToolHint[]>([]);
-    const [toolsLoading, setToolsLoading] = useState(false);
+    // Tools are kept with the toolkit they were fetched for. A disconnected plugin shows none,
+    // and a toolkit still loading shows a loading state, without any effect writing state.
+    const toolsKey = plugin.connected ? plugin.toolkit : null;
+    const [toolsFor, setToolsFor] = useState<{ key: string; list: PluginToolHint[] } | null>(null);
+    const tools = toolsKey && toolsFor?.key === toolsKey ? toolsFor.list : [];
+    const toolsLoading = Boolean(toolsKey) && toolsFor?.key !== toolsKey;
 
     useEffect(() => {
-        if (!plugin.connected) {
-            setTools([]);
-            return;
-        }
+        if (!toolsKey) return;
         let cancelled = false;
-        setToolsLoading(true);
-        void fetchPluginTools(plugin.toolkit)
+        void fetchPluginTools(toolsKey)
             .then((list) => {
-                if (!cancelled) setTools(list);
+                if (!cancelled) setToolsFor({ key: toolsKey, list });
             })
             .catch(() => {
-                if (!cancelled) setTools([]);
-            })
-            .finally(() => {
-                if (!cancelled) setToolsLoading(false);
+                if (!cancelled) setToolsFor({ key: toolsKey, list: [] });
             });
         return () => {
             cancelled = true;
         };
-    }, [plugin.connected, plugin.toolkit]);
+    }, [toolsKey]);
 
     function setMode(value: AutoRunModeSetting) {
         updateSettingSection("ai", {

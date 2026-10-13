@@ -151,7 +151,6 @@ function ChatRow({
     unread,
     color,
     subagents,
-    edge = "none",
     selecting = false,
     selected = false,
     onToggleSelect,
@@ -175,17 +174,13 @@ function ChatRow({
     const [draft, setDraft] = useState(title);
     const [expanded, setExpanded] = useState(false);
     const nestedCount = subagents.length;
-    const workerCount = useRef(0);
-    if (workerCount.current !== nestedCount) {
-        const appeared = workerCount.current === 0 && nestedCount > 0;
-        workerCount.current = nestedCount;
-        if (appeared) setExpanded(true);
+    // Expand the row the first time its subagents appear. Tracked during render, not in an effect.
+    const [seenWorkers, setSeenWorkers] = useState(0);
+    if (seenWorkers !== nestedCount) {
+        setSeenWorkers(nestedCount);
+        if (seenWorkers === 0 && nestedCount > 0) setExpanded(true);
     }
     const inputRef = useRef<HTMLInputElement>(null);
-
-    useEffect(() => {
-        if (!renaming) setDraft(title);
-    }, [title, renaming]);
 
     useEffect(() => {
         if (!renaming) return;

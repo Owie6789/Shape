@@ -386,14 +386,18 @@ const MenubarMenu = ({
     // Radix Menubar.Menu does not type or safely accept onOpenChange (spreading it
     // onto Menu.Root would overwrite the internal close handler). We accept the
     // prop for API compatibility and notify via a trigger data-state observer.
-    const triggerRef = React.useRef<HTMLElement | null>(null);
+    // The trigger node is kept in state (set from the trigger's ref callback), so the observer
+    // effect re-runs when the trigger mounts or is replaced.
+    const [triggerEl, setTriggerEl] = React.useState<HTMLElement | null>(null);
     const onOpenChangeRef = React.useRef(onOpenChange);
-    onOpenChangeRef.current = onOpenChange;
+    React.useLayoutEffect(() => {
+        onOpenChangeRef.current = onOpenChange;
+    });
     const prevOpenRef = React.useRef(false);
 
     React.useEffect(() => {
         if (!onOpenChange) return;
-        const el = triggerRef.current;
+        const el = triggerEl;
         if (!el) return;
 
         const sync = () => {
@@ -408,7 +412,7 @@ const MenubarMenu = ({
         const observer = new MutationObserver(sync);
         observer.observe(el, { attributes: true, attributeFilter: ["data-state"] });
         return () => observer.disconnect();
-    }, [onOpenChange]);
+    }, [onOpenChange, triggerEl]);
 
     return (
         <MenubarPrimitive.Menu value={value}>
@@ -423,14 +427,7 @@ const MenubarMenu = ({
                         (child.type as { displayName?: string }).displayName === MenubarTrigger.displayName)
                 ) {
                     return React.cloneElement(child as React.ReactElement<{ ref?: React.Ref<HTMLElement> }>, {
-                        ref: (node: HTMLElement | null) => {
-                            triggerRef.current = node;
-                            const existingRef = (child as React.ReactElement & { ref?: React.Ref<HTMLElement> }).ref;
-                            if (typeof existingRef === "function") existingRef(node);
-                            else if (existingRef && typeof existingRef === "object") {
-                                (existingRef as React.MutableRefObject<HTMLElement | null>).current = node;
-                            }
-                        },
+                        ref: setTriggerEl,
                     });
                 }
                 return child;

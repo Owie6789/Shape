@@ -1,7 +1,6 @@
 "use client";
 
 import { GithubMark } from "@/components/ui/github-mark";
-import { Checkmark20Regular } from "@fluentui/react-icons/headless/svg/checkmark";
 import { Branch20Regular } from "@fluentui/react-icons/headless/svg/branch";
 import { ChevronDown20Regular } from "@fluentui/react-icons/headless/svg/chevron-down";
 
@@ -87,12 +86,15 @@ function GitSetupPick({
     const [cloneKind, setCloneKind] = useState<CloneKind>("git");
     const [query, setQuery] = useState("");
 
-    useEffect(() => {
+    // Reset the dialog when it closes (adjusting state during render, no effect).
+    const [seenOpen, setSeenOpen] = useState(open);
+    if (open !== seenOpen) {
+        setSeenOpen(open);
         if (!open) {
             setStep("setup");
             setQuery("");
         }
-    }, [open]);
+    }
 
     const close = () => onOpenChange(false);
 

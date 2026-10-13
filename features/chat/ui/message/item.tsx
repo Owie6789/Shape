@@ -3,7 +3,6 @@ import { BranchFork20Regular } from "@fluentui/react-icons/headless/svg/branch-f
 import { ChevronDown20Regular } from "@fluentui/react-icons/headless/svg/chevron-down";
 import { Clipboard20Regular } from "@fluentui/react-icons/headless/svg/clipboard";
 import { SelectAllOn20Regular } from "@fluentui/react-icons/headless/svg/select-all-on";
-import { Document20Regular } from "@fluentui/react-icons/headless/svg/document";
 import { Edit20Regular } from "@fluentui/react-icons/headless/svg/edit";
 import { Folder20Filled } from "@fluentui/react-icons/headless/svg/folder";
 import { MoreHorizontal20Regular } from "@fluentui/react-icons/headless/svg/more-horizontal";
@@ -358,11 +357,6 @@ function ChatMessageItemInner({
                 void navigator.clipboard.writeText(getCopyText());
             }
         }
-    };
-
-    const isEditResolved = (filePath: string) => {
-        if (isFileEditResolved?.(filePath)) return true;
-        return false;
     };
 
     const isUser = role === "user";

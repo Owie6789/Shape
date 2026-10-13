@@ -40,7 +40,6 @@ import TestPanel from "@/features/testing/ui/test-panel";
 import { Button } from "@/components/ui/button";
 import { getSettings, resolveDefaultTerminalShell } from "@/lib/settings";
 import { setLastDevUrl } from "@/features/preview/store";
-import { Input } from "@/components/ui/input";
 import {
     WORKBENCH_TAB_ACTION_BUTTON_CLASS,
     WORKBENCH_TAB_BAR_CLASS,
@@ -568,7 +567,6 @@ export default function Terminal({
     const [projectActiveTabs, setProjectActiveTabs] = useState<Record<string, string | null>>(globalTerminalStore.activeProjectTabs);
     const [secondaryActiveTabs, setSecondaryActiveTabs] = useState<Record<string, string | null>>(globalTerminalStore.activeSecondaryTabs);
     const [focusedGroups, setFocusedGroups] = useState<Record<string, TerminalGroupId>>(globalTerminalStore.focusedGroup);
-    const [panelFilter, setPanelFilter] = useState("");
     const safeCwd = project_path || "global";
     const currentTabs = terminalTabs.filter(t => t.cwd === safeCwd);
     const leftTabs = currentTabs.filter((t) => (t.group ?? "left") === "left");

@@ -49,7 +49,10 @@ export default function PreviewPanel({
     const inputRef = useRef<HTMLInputElement>(null);
     const iframeRef = useRef<HTMLIFrameElement>(null);
     const { project_path } = useProjectState();
-    const [webProject, setWebProject] = useState<boolean | null>(null);
+    // Whether the project is a web app, keyed to the path it was checked for, so a stale
+    // answer from a previous project is never shown.
+    const [webAnswer, setWebAnswer] = useState<{ path: string; web: boolean } | null>(null);
+    const webProject = project_path && webAnswer?.path === project_path ? webAnswer.web : null;
     const [designLocal, setDesignLocal] = useState(false);
     const designModeFlag = useRuntimeFlag("design_mode", true);
     const designOn = design ?? designLocal;
@@ -77,11 +80,11 @@ export default function PreviewPanel({
     }, []);
 
     useEffect(() => {
-        if (!project_path) {
-            setWebProject(null);
-            return;
-        }
-        void isWebProject(project_path).then(setWebProject).catch(() => setWebProject(false));
+        if (!project_path) return;
+        const path = project_path;
+        void isWebProject(path)
+            .then((web) => setWebAnswer({ path, web }))
+            .catch(() => setWebAnswer({ path, web: false }));
     }, [project_path]);
 
     const localSite = isLocalPreviewUrl(currentUrl);
@@ -95,9 +98,6 @@ export default function PreviewPanel({
               : designOn
                 ? "Exit design mode"
                 : "Design mode";
-    useEffect(() => {
-        if (!designReady && designOn) setDesignOn(false);
-    }, [designReady, designOn, setDesignOn]);
 
     // Track cross-origin iframe document loads via Resource Timing when we can't read location.
     useEffect(() => {

@@ -289,7 +289,9 @@ let host: HTMLDivElement;
 let session: Session;
 
 function Harness({ onRender }: { onRender: (s: Session) => void }) {
-    const current = useChatSession();
+    const messagesEndRef = React.useRef<HTMLDivElement>(null);
+    const scrollContainerRef = React.useRef<HTMLDivElement>(null);
+    const current = useChatSession(messagesEndRef, scrollContainerRef);
     React.useEffect(() => {
         onRender(current);
     });

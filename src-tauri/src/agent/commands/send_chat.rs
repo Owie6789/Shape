@@ -918,8 +918,20 @@ fn persist_assistant_for_turn(
     let Some(path) = project else {
         return Ok(());
     };
-    let mut hist = history::find_conversation_by_id(conversation_id, Some(path))
-        .map(|(_, conv)| conv.history)
+    // In-memory state is newer than the file between saves, so it wins; disk is the fallback
+    // for a chat that is not loaded in this session.
+    let in_memory = {
+        let convs = state.conversations.lock()?;
+        convs
+            .get(path)
+            .and_then(|list| list.iter().find(|c| c.id == conversation_id))
+            .map(|c| c.history.clone())
+    };
+    let mut hist = in_memory
+        .or_else(|| {
+            history::find_conversation_by_id(conversation_id, Some(path))
+                .map(|(_, conv)| conv.history)
+        })
         .unwrap_or_default();
     history::replace_or_push_assistant(&mut hist, message);
     history::upsert_and_persist_snapshot(state, path, conversation_id, title, hist)

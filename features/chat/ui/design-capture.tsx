@@ -291,6 +291,7 @@ export function DesignPreviewCaptureHost() {
     );
 
     React.useEffect(() => {
+        const activeEntries = activeRef.current;
         const onMessage = (event: MessageEvent) => {
             if (!event.data || (event.data.type !== "shape-preview-ready" && event.data.type !== "shape-design-ready")) return;
             for (const [requestId, entry] of activeRef.current) {
@@ -342,11 +343,11 @@ export function DesignPreviewCaptureHost() {
             window.removeEventListener("message", onMessage);
             void unlistenCapture.then((fn) => fn()).catch(() => { });
             void unlistenAbort.then((fn) => fn()).catch(() => { });
-            for (const entry of activeRef.current.values()) {
+            for (const entry of activeEntries.values()) {
                 clearTimeout(entry.timeoutId);
                 entry.iframe.remove();
             }
-            activeRef.current.clear();
+            activeEntries.clear();
         };
     }, [handleReady, settle]);
 

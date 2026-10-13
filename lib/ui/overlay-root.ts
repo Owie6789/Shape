@@ -1,6 +1,9 @@
 "use client";
 
-import { createContext, createElement, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, createElement, useContext, useSyncExternalStore, type ReactNode } from "react";
+
+const subscribeNoop = () => () => {};
+const getNoRoot = () => undefined;
 
 /** Visible window shell. Overlays must mount here or they paint on the transparent HWND. */
 export function getOverlayRoot(): HTMLElement | undefined {
@@ -28,9 +31,7 @@ export function OverlayRootProvider({
 
 export function useOverlayRoot(): HTMLElement | undefined {
     const override = useContext(OverlayRootContext);
-    const [node, setNode] = useState<HTMLElement | undefined>(undefined);
-    useEffect(() => {
-        setNode(getOverlayRoot());
-    }, []);
+    // Looked up from the DOM on the client only; the server render has no root.
+    const node = useSyncExternalStore(subscribeNoop, getOverlayRoot, getNoRoot);
     return override ?? node;
 }

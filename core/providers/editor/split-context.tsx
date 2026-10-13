@@ -235,7 +235,7 @@ export function EditorSplitProvider({ children }: { children: React.ReactNode })
         if (prevKey === nextKey) return;
         prevPathsRef.current = openPaths;
         dispatch({ type: "SYNC_OPEN_FILES", paths: openPaths, backendActive: active_file });
-    }, [openPaths, split]);
+    }, [openPaths, split, active_file]);
 
     useEffect(() => {
         const handleSplit = (e: Event) => {

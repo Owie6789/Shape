@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import Chat from "@/features/chat/ui/chat";
 import { useProjectState } from "@/lib/backend";
@@ -49,26 +49,21 @@ function SidebarPeek({
     onEnter: () => void;
     onLeave: () => void;
 }) {
-    const hostRef = useRef<HTMLDivElement>(null);
+    // The list stays mounted for a moment after the flyout hides, so its exit can finish.
+    // It is shown while `shown` is true, or until that delay ends.
     const [host, setHost] = useState<HTMLElement>();
     const [mounted, setMounted] = useState(shown);
-
-    useLayoutEffect(() => {
-        setHost(hostRef.current ?? undefined);
-    }, []);
+    const attachHost = useCallback((el: HTMLDivElement | null) => setHost(el ?? undefined), []);
 
     useEffect(() => {
-        if (shown) {
-            setMounted(true);
-            return;
-        }
+        if (shown) return;
         const t = window.setTimeout(() => setMounted(false), 200);
         return () => window.clearTimeout(t);
     }, [shown]);
 
     return (
         <div
-            ref={hostRef}
+            ref={attachHost}
             data-sidebar-peek=""
             className={cn(
                 "fixed z-30 flex w-82 flex-col overflow-visible transition-opacity duration-200 ease-[var(--ease-out)]",
@@ -83,7 +78,7 @@ function SidebarPeek({
         >
             <div className="h-titlebar w-10 shrink-0" aria-hidden />
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden squircle-2xl border border-border-subtle bg-sidebar shadow-md/40">
-                {mounted && host ? (
+                {(shown || mounted) && host ? (
                     <OverlayRootProvider value={host}>
                         <ChatList
                             onNewChat={() => {

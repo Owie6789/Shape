@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ShapeLogo } from "@/components/ui/shape-logo";
 import {
@@ -37,18 +37,17 @@ export function GitAiAction({
     compact?: boolean;
 }) {
     const [open, setOpen] = useState(false);
-    const pendingOpen = useRef(false);
+    // "Open once the result arrives" is state, so it can be acted on during render.
+    const [pendingOpen, setPendingOpen] = useState(false);
     const has = Boolean(content?.trim());
 
-    useEffect(() => {
-        if (pendingOpen.current && has && !loading) {
-            pendingOpen.current = false;
-            setOpen(true);
-        }
-    }, [has, loading]);
+    if (pendingOpen && has && !loading) {
+        setPendingOpen(false);
+        setOpen(true);
+    }
 
     const run = () => {
-        pendingOpen.current = true;
+        setPendingOpen(true);
         void Promise.resolve(onRun());
     };
 

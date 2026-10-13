@@ -13,7 +13,25 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
     "src-tauri/target/**",
+    // Generated, minified preview/runtime bundles (see scripts/build/preview.mjs).
+    "public/preview/**",
+    "src-tauri/runtime/**",
   ]),
 ]);
+
+// Names starting with "_" are intentionally unused (e.g. stubs kept for call-site compatibility).
+eslintConfig.push({
+  rules: {
+    "@typescript-eslint/no-unused-vars": [
+      "warn",
+      {
+        argsIgnorePattern: "^_",
+        varsIgnorePattern: "^_",
+        destructuredArrayIgnorePattern: "^_",
+        caughtErrorsIgnorePattern: "^_",
+      },
+    ],
+  },
+});
 
 export default eslintConfig;

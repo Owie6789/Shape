@@ -1,8 +1,6 @@
 "use client";
 
-import Image from "next/image";
 import { useEffect, useState } from "react";
-import { Button, type ButtonStatus } from "@/components/ui/button";
 import { loginShape, useShapeAuth } from "@/lib/cloud/store";
 import { commands } from "@/lib/backend";
 import { SHAPE_API_BASE } from "@/lib/cloud/api";
@@ -19,14 +17,6 @@ export function LoginPanel({
     const busy = waiting || shapeAuth.isLoggingIn || finishing;
     const authError = shapeAuth.error;
     const cancelled = Boolean(authError && /cancel/i.test(authError));
-    const continueStatus: ButtonStatus = finishing
-        ? "loading"
-        : waiting || shapeAuth.isLoggingIn
-          ? "waiting"
-          : authError && !cancelled
-            ? "error"
-            : "idle";
-
     useEffect(() => {
         if (!shapeAuth.isLoggingIn) setWaiting(false);
     }, [shapeAuth.isLoggingIn]);

@@ -136,11 +136,6 @@ function toggleLayout(id: "primary-sidebar" | "secondary-sidebar" | "panel") {
     window.dispatchEvent(new CustomEvent("shape-layout-toggle", { detail: { id } }));
 }
 
-function openSearchSidebar(mode: "search" | "replace") {
-    window.dispatchEvent(new CustomEvent("shape-set-active-tab", { detail: "search" }));
-    window.dispatchEvent(new CustomEvent("shape-layout-toggle", { detail: { id: "primary-sidebar", value: true } }));
-    window.dispatchEvent(new CustomEvent("shape-search-mode", { detail: { mode } }));
-}
 
 function showSidebarTab(tab: string) {
     window.dispatchEvent(new CustomEvent("shape-set-active-tab", { detail: tab }));

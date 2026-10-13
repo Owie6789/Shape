@@ -848,7 +848,7 @@ export const commands = {
         invokeCommand<void>("select_design_preview", {
             id,
             skipped: skipped ?? false,
-            ...(conceptId ? { concept_id: conceptId } : {}),
+            ...(conceptId ? { conceptId } : {}),
             ...(tweaks ? { tweaks } : {}),
         }),
     forkConversation: (messageIndex: number) =>

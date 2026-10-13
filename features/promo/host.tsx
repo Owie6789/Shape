@@ -1,7 +1,6 @@
 "use client";
 
 import { Dismiss20Regular } from "@fluentui/react-icons/headless/svg/dismiss";
-import { Settings20Regular } from "@fluentui/react-icons/headless/svg/settings";
 
 
 
@@ -15,6 +14,7 @@ import { useProjectState } from "@/lib/backend";
 import { SHAPE_API_BASE } from "@/lib/cloud/api";
 import { isWebProject } from "@/features/detection/lib/lib";
 import { useRuntimeFlag } from "@/lib/runtime/store";
+import { useIsMounted } from "@/lib/ui/use-mounted";
 import {
     loadSeenPromoIds,
     markPromoSeen,
@@ -50,17 +50,16 @@ export function PromoCardHost() {
     const router = useRouter();
     const { project_path } = useProjectState();
     const promosOn = useRuntimeFlag("promo_cards", true);
-    const [web, setWeb] = useState(false);
-    const [mounted, setMounted] = useState(false);
-    const [seen, setSeen] = useState<string[]>([]);
+    const [webState, setWeb] = useState(false);
+    const web = Boolean(project_path) && webState;
+    const mounted = useIsMounted();
+    const [seen, setSeen] = useState<string[]>(() => loadSeenPromoIds());
     const [dismissed, setDismissed] = useState<string | null>(null);
 
     // Only what the CMS publishes. No bundled fallback — an empty feed means no card.
     const [cards, setCards] = useState<PromoCardDef[]>([]);
 
     useEffect(() => {
-        setMounted(true);
-        setSeen(loadSeenPromoIds());
         void fetch(`${SHAPE_API_BASE}/api/promos`)
             .then((res) => (res.ok ? res.json() : null))
             .then((data: { cards?: PromoCardDef[] } | null) => {
@@ -73,10 +72,7 @@ export function PromoCardHost() {
     }, []);
 
     useEffect(() => {
-        if (!project_path) {
-            setWeb(false);
-            return;
-        }
+        if (!project_path) return;
         let cancelled = false;
         void isWebProject(project_path).then((ok) => {
             if (!cancelled) setWeb(ok);

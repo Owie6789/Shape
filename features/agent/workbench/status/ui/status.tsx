@@ -7,7 +7,6 @@ import { Code20Regular } from "@fluentui/react-icons/headless/svg/code";
 import { useMemo } from "react";
 import { Icon } from "@/components/ui/icon";
 
-import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
 import { FileIcon } from "@/components/ui/file-icon";
 import { useProjectState, commands } from "@/lib/backend";

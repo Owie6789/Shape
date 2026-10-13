@@ -29,9 +29,12 @@ export function DesignSelectionPrompt({
     const inputRef = useRef<HTMLInputElement>(null);
     const rect = selected.rect;
 
-    useEffect(() => {
+    // A new element (or re-opening) starts with an empty draft.
+    const [seenTarget, setSeenTarget] = useState({ key: selected.key, open });
+    if (seenTarget.key !== selected.key || seenTarget.open !== open) {
+        setSeenTarget({ key: selected.key, open });
         setDraft("");
-    }, [selected.key, open]);
+    }
 
     useEffect(() => {
         if (!open) return;

@@ -9,7 +9,7 @@ import { TextNumberListLtr20Regular } from "@fluentui/react-icons/headless/svg/t
 import { TextStrikethrough20Regular } from "@fluentui/react-icons/headless/svg/text-strikethrough";
 
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
@@ -97,15 +97,23 @@ export function MarkdownToolbar({
     onClose,
     onRectChange,
 }: MarkdownToolbarProps) {
-    const panelRef = useRef<HTMLDivElement>(null);
     const holdRef = useRef(false);
-    const [position, setPosition] = useState({ top: 0, left: 0 });
-    const [liveRect, setLiveRect] = useState(selection.rect);
+    // Measured toolbar size, read from the DOM on mount (ref callback, not an effect).
+    const [size, setSize] = useState({ width: 360, height: 40 });
+    const measurePanel = useCallback((el: HTMLDivElement | null) => {
+        if (!el) return;
+        const { width, height } = el.getBoundingClientRect();
+        const next = { width: width || 360, height: height || 40 };
+        setSize((prev) =>
+            prev.width === next.width && prev.height === next.height ? prev : next,
+        );
+    }, []);
+    // Live rect from scroll/resize, tagged with the selection it was measured for.
+    const selectionKey = `${selection.rect.top},${selection.rect.left},${selection.rect.width},${selection.rect.height},${selection.text}`;
+    const [liveState, setLiveState] = useState<{ key: string; rect: MarkdownSelection["rect"] } | null>(null);
+    const liveRect = liveState && liveState.key === selectionKey ? liveState.rect : selection.rect;
+    const position = clampToolbarPosition(liveRect, size.width, size.height);
     const { rewrite, loading, loggedIn } = useTextRewrite();
-
-    useEffect(() => {
-        setLiveRect(selection.rect);
-    }, [selection.rect.top, selection.rect.left, selection.rect.width, selection.rect.height, selection.text]);
 
     useEffect(() => {
         const sync = () => {
@@ -126,7 +134,7 @@ export function MarkdownToolbar({
                     return;
                 }
             }
-            setLiveRect(next);
+            setLiveState({ key: selectionKey, rect: next });
             onRectChange?.(next);
         };
 
@@ -142,14 +150,7 @@ export function MarkdownToolbar({
             window.removeEventListener("resize", sync);
             document.removeEventListener("selectionchange", sync);
         };
-    }, [scrollRoot, onClose, onRectChange]);
-
-    useLayoutEffect(() => {
-        const el = panelRef.current;
-        if (!el) return;
-        const { width, height } = el.getBoundingClientRect();
-        setPosition(clampToolbarPosition(liveRect, width || 360, height || 40));
-    }, [liveRect.top, liveRect.left, liveRect.width, liveRect.height, selection.text]);
+    }, [scrollRoot, onClose, onRectChange, selectionKey]);
 
     const handleAi = async (action: TextRewriteAction) => {
         const next = await rewrite(selection.text, action);
@@ -158,7 +159,7 @@ export function MarkdownToolbar({
 
     const toolbar = (
         <div
-            ref={panelRef}
+            ref={measurePanel}
             className="fixed z-710 flex items-center gap-0.5 rounded-xl border border-border-subtle bg-surface-3 px-1 py-1 shadow-xl"
             style={{ top: position.top, left: position.left }}
             onMouseDown={(e) => {

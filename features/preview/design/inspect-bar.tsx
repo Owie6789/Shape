@@ -56,9 +56,15 @@ export function DesignInspectOverlay({
     const [gap, setGap] = useState(8);
     const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+    // Turning design mode off clears the selection (adjusting state during render, no effect).
+    const [seenEnabled, setSeenEnabled] = useState(enabled);
+    if (enabled !== seenEnabled) {
+        setSeenEnabled(enabled);
+        if (!enabled) setSelected(null);
+    }
+
     useEffect(() => {
         if (!enabled) {
-            setSelected(null);
             iframeRef.current?.contentWindow?.postMessage(
                 { type: "shape-design-set-mode", mode: "normal", projectRoot: project_path },
                 "*",
@@ -116,11 +122,10 @@ export function DesignInspectOverlay({
 
     if (!enabled || !selected) return null;
 
-    const iframe = iframeRef.current;
-    const frame = iframe?.getBoundingClientRect();
+    // A selection only arrives from the iframe, so its rect is already frame-relative.
     const rect = selected.rect;
-    const top = frame ? rect.y + rect.height + 8 : 8;
-    const left = frame ? Math.max(8, rect.x + rect.width / 2 - 160) : 8;
+    const top = rect.y + rect.height + 8;
+    const left = Math.max(8, rect.x + rect.width / 2 - 160);
 
     return (
         <div

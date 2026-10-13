@@ -94,7 +94,11 @@ async function loadSides(
 export function SingleFileDiffEditor({ tab }: { tab: FileDiffTabInfo }) {
     const [original, setOriginal] = useState("");
     const [current, setCurrent] = useState("");
-    const [loading, setLoading] = useState(true);
+    // Loading is tied to the request for this exact file: the flag clears only when that
+    // request's sides arrive, so a switch shows loading straight away without an effect.
+    const loadKey = [tab.repo, tab.path, tab.staged, tab.commit, tab.parent].join("\0");
+    const [loadedKey, setLoadedKey] = useState<string | null>(null);
+    const loading = loadedKey !== loadKey;
     const [split, setSplit] = useState(false);
     const name = fileName(tab.path);
     const isCommit = Boolean(tab.commit);
@@ -103,17 +107,16 @@ export function SingleFileDiffEditor({ tab }: { tab: FileDiffTabInfo }) {
 
     useEffect(() => {
         let cancelled = false;
-        setLoading(true);
         void loadSides(tab.repo, tab.path, tab.commit, tab.parent).then((sides) => {
             if (cancelled) return;
             setOriginal(sides.original);
             setCurrent(sides.current);
-            setLoading(false);
+            setLoadedKey(loadKey);
         });
         return () => {
             cancelled = true;
         };
-    }, [tab.repo, tab.path, tab.staged, tab.commit, tab.parent]);
+    }, [loadKey, tab.repo, tab.path, tab.commit, tab.parent]);
 
     const toggleStage = async () => {
         try {

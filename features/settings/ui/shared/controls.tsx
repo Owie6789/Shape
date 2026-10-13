@@ -4,7 +4,6 @@ import { ChevronDown20Regular } from "@fluentui/react-icons/headless/svg/chevron
 import React, { useRef } from "react";
 import { Icon, type IconGlyph } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 

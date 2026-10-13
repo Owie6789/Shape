@@ -10,14 +10,14 @@ export const GIT_CHROME_ACTIONS_SLOT = "shape-git-chrome-actions";
 export const GIT_WINDOW_TITLE_SLOT = "shape-git-window-title";
 
 function useSlot(id: string) {
-    const [el, setEl] = useState<HTMLElement | null>(null);
+    // The found element is tagged with its slot id, so a changed id never shows the old node.
+    const [found, setFound] = useState<{ id: string; el: HTMLElement } | null>(null);
     useEffect(() => {
         const find = () => document.getElementById(id);
-        setEl(find());
         const timer = window.setInterval(() => {
             const next = find();
             if (next) {
-                setEl(next);
+                setFound({ id, el: next });
                 window.clearInterval(timer);
             }
         }, 40);
@@ -27,7 +27,7 @@ function useSlot(id: string) {
             window.clearTimeout(stop);
         };
     }, [id]);
-    return el;
+    return found && found.id === id ? found.el : null;
 }
 
 /** Section title + search + action slot in the window / agent top bar. */

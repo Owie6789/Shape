@@ -404,7 +404,9 @@ export function MarkdownLiveEditor({
     const onChangeRef = useRef(onChange);
     const lastEmitted = useRef(content);
     const contentRef = useRef(content);
-    contentRef.current = content;
+    useEffect(() => {
+        contentRef.current = content;
+    }, [content]);
     const [bubble, setBubble] = useState<Bubble | null>(null);
     useEffect(() => {
         onChangeRef.current = onChange;

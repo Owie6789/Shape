@@ -9,6 +9,7 @@ import { TextFontSize20Regular } from "@fluentui/react-icons/headless/svg/text-f
 
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useIsMounted } from "@/lib/ui/use-mounted";
 import { createPortal } from "react-dom";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { cn } from "@/lib/utils";
@@ -130,15 +131,16 @@ export function DesignPreviewGallery({
     const initialIndex = Math.max(0, items.findIndex((p) => p.id === selected));
     const [index, setIndex] = useState(initialIndex >= 0 ? initialIndex : 0);
     const [open, setOpen] = useState(false);
-    const [mounted, setMounted] = useState(false);
+    const mounted = useIsMounted();
     const [submitting, setSubmitting] = useState(false);
     const [tweaks, setTweaks] = useState({ radius: 8, padding: 12, gap: 8 });
     const [tweakTab, setTweakTab] = useState<"radius" | "padding" | "gap">("radius");
     const iframeRef = useRef<HTMLIFrameElement | null>(null);
     const dialogIframeRef = useRef<HTMLIFrameElement | null>(null);
-    const [frameReady, setFrameReady] = useState(false);
-
-    useEffect(() => setMounted(true), []);
+    // The frame is ready for one specific item. Switching items makes it not-ready again,
+    // without an effect that resets state.
+    const [readyFor, setReadyFor] = useState<{ index: number; items: unknown } | null>(null);
+    const frameReady = readyFor !== null && readyFor.index === index && readyFor.items === items;
 
     useEffect(() => {
         if (!items.length) return;
@@ -168,10 +170,6 @@ export function DesignPreviewGallery({
         };
     }, [open, items.length]);
 
-    useEffect(() => {
-        setFrameReady(false);
-    }, [index, items]);
-
     const item = items[index];
     if (!item) return null;
 
@@ -198,7 +196,7 @@ export function DesignPreviewGallery({
     }
 
     const onFrameReady = (ref: React.RefObject<HTMLIFrameElement | null>) => {
-        setFrameReady(true);
+        setReadyFor({ index, items });
         applyLiveTweaks(ref.current, tweaks);
     };
 

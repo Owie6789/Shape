@@ -7,7 +7,6 @@ import { cn } from "@/lib/utils";
 
 export function PluginLogo({
     toolkit,
-    name,
     logo,
     size = 32,
     className,

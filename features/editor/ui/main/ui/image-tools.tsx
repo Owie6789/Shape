@@ -71,23 +71,23 @@ export function ImageAdjustmentsPanel({
     open: boolean;
     children: React.ReactNode;
 }) {
+    // Shown while open, and for a short exit animation after closing.
     const [mounted, setMounted] = useState(open);
-    const [state, setState] = useState<"open" | "closed">(open ? "open" : "closed");
+    // Entering is confirmed one frame after opening, so the CSS transition has a start state.
+    const [entered, setEntered] = useState(false);
+    const showing = open || mounted;
+    const state = open && entered ? "open" : "closed";
 
     useEffect(() => {
         if (open) {
-            setMounted(true);
-            const frame = requestAnimationFrame(() => setState("open"));
+            const frame = requestAnimationFrame(() => setEntered(true));
             return () => cancelAnimationFrame(frame);
         }
-
-        setState("closed");
         const timer = window.setTimeout(() => setMounted(false), 75);
         return () => window.clearTimeout(timer);
     }, [open]);
 
-    if (!open && !mounted) return null;
-    if (!mounted) return null;
+    if (!showing) return null;
 
     return (
         <div

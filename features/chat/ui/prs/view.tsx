@@ -10,7 +10,6 @@ import { ChevronDown20Regular } from "@fluentui/react-icons/headless/svg/chevron
 import { Filter20Regular } from "@fluentui/react-icons/headless/svg/filter";
 import { MoreHorizontal20Regular } from "@fluentui/react-icons/headless/svg/more-horizontal";
 import { Open20Regular } from "@fluentui/react-icons/headless/svg/open";
-import { TextNumberListLtr20Regular } from "@fluentui/react-icons/headless/svg/text-number-list-ltr";
 
 
 
@@ -315,7 +314,7 @@ export function PullRequestsPanel({ pane = "full" }: { pane?: "list" | "detail" 
         return () => {
             cancelled = true;
         };
-    }, [selected?.id, selected?.number, repo?.owner, repo?.repo]);
+    }, [selected, repo]);
 
     const checkout = async () => {
         if (!project_path || !selected?.headRef) {

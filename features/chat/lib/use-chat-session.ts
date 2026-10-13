@@ -148,7 +148,14 @@ function writeComposerPrefs(prefs: ComposerPrefs) {
     }
 }
 
-export function useChatSession() {
+/**
+ * The scroll refs are created by the caller, not returned from this hook. Keeping refs out of the
+ * returned session object lets components read session values during render.
+ */
+export function useChatSession(
+    messagesEndRef: React.RefObject<HTMLDivElement | null>,
+    scrollContainerRef: React.RefObject<HTMLDivElement | null>,
+) {
     const [uploadedFiles, setUploadedFiles] = React.useState<ComposerAttachment[]>([]);
 
     const addUploadedFiles = React.useCallback((files: File[], peaks?: number[][]) => {
@@ -576,7 +583,7 @@ export function useChatSession() {
         }
     };
 
-    const handleAcceptEdit = async (editId: string) => {
+    const handleAcceptEdit = React.useCallback(async (editId: string) => {
         const edit = pendingEdits.find((e) => e.id === editId);
         if (!edit) return;
         await markEditResolved(edit.file, "applied", edit.replacement);
@@ -586,7 +593,7 @@ export function useChatSession() {
                 detail: { path: resolved, rawPath: edit.file },
             }),
         );
-    };
+    }, [pendingEdits, markEditResolved, project_path]);
 
     const handleRejectEdit = async (editId: string) => {
         const idx = pendingEdits.findIndex((e) => e.id === editId);
@@ -1357,8 +1364,6 @@ export function useChatSession() {
         messagesRef.current = messages;
     }, [messages]);
 
-    const messagesEndRef = React.useRef<HTMLDivElement>(null);
-    const scrollContainerRef = React.useRef<HTMLDivElement>(null);
     const [scrolledFromTop, setScrolledFromTop] = React.useState(false);
     const [scrolledFromBottom, setScrolledFromBottom] = React.useState(false);
     const isNearBottomRef = React.useRef(true);
@@ -1435,7 +1440,7 @@ export function useChatSession() {
                 console.error("Failed to restore checkpoint:", err);
             }
         },
-        [refreshHistory, activateViewedBackend],
+        [refreshHistory, activateViewedBackend, messagesEndRef],
     );
 
     const handleRedo = React.useCallback(
@@ -1727,7 +1732,7 @@ export function useChatSession() {
         isNearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
         setScrolledFromTop(el.scrollTop > 4);
         setScrolledFromBottom(!isNearBottomRef.current);
-    }, []);
+    }, [scrollContainerRef]);
 
     React.useEffect(() => {
         if (isNearBottomRef.current) {
@@ -1743,7 +1748,7 @@ export function useChatSession() {
                 el.scrollHeight - el.scrollTop - el.clientHeight >= 150,
             );
         }
-    }, [messages, isLoading]);
+    }, [messages, isLoading, messagesEndRef, scrollContainerRef]);
 
     const handleLoadConversation = React.useCallback(
         async (id: string, options?: { force?: boolean }) => {
@@ -1878,8 +1883,6 @@ export function useChatSession() {
         project_path,
         openChatTabs,
         activeChatTabId,
-        messagesEndRef,
-        scrollContainerRef,
         handleScroll,
         scrolledFromTop,
         scrolledFromBottom,

@@ -10,16 +10,18 @@ export function WebviewReconnect() {
     const [down, setDown] = useState(false);
 
     useEffect(() => {
-        const onFailed = () => setDown(true);
-        window.addEventListener("shape-webview-load-failed", onFailed);
+        // `listen` resolves asynchronously; if unmount wins the race, drop the subscription
+        // as soon as it arrives instead of leaking it.
+        let active = true;
         let unlisten: (() => void) | undefined;
         if (isTauriRuntime()) {
             void listen("webview-load-failed", () => setDown(true)).then((fn) => {
-                unlisten = fn;
+                if (active) unlisten = fn;
+                else fn();
             });
         }
         return () => {
-            window.removeEventListener("shape-webview-load-failed", onFailed);
+            active = false;
             unlisten?.();
         };
     }, []);

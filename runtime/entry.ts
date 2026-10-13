@@ -141,7 +141,6 @@ export async function mountPreview(userCode: string, projectCss = "") {
     injectBaseLayoutCss();
     injectTailwindTheme(projectCss);
     const wrapped = compileUserCode(userCode);
-    // eslint-disable-next-line no-new-func
     const App = new Function("React", wrapped)(React) as React.ComponentType;
     const root = document.getElementById("root");
     if (!root) throw new Error("Missing #root");
