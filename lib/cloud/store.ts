@@ -19,8 +19,11 @@ import { identifyTelemetryUser } from "@/lib/telemetry";
 import {
   USAGE_STALE_MS,
   UsageRefreshScheduler,
+  isStalePeerSnapshot,
   isUsageStale,
   mergeUsageSnapshot,
+  recordPeerSnapshot,
+  stampUsageSnapshot,
   usageSnapshotFromAccount,
   usageSnapshotFromCheck,
   type UsageSnapshot,
@@ -98,6 +101,16 @@ let refreshInFlight: Promise<string | null> | null = null;
  * responses race.
  */
 const usageScheduler = new UsageRefreshScheduler({ load: () => loadAccountUsage() });
+/** Identifies this window in usage broadcasts so peers can order them. */
+const usageOriginId =
+  typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `win-${Math.random().toString(36).slice(2)}`;
+let usageSeq = 0;
+/** Newest seq applied per origin window — rejects out-of-order Tauri emits. */
+const peerUsageSeq = new Map<string, number>();
+/** Bumped on every token change so in-flight fetches cannot resurrect a session. */
+let sessionGeneration = 0;
 
 function settleLoginWaiter(success: boolean) {
   if (!loginWaiter) return;
@@ -282,16 +295,27 @@ export function applyUsageCheckResult(check: UsageCheckResult): void {
 
 function broadcastUsageChange(snapshot: UsageSnapshot) {
   if (typeof window === "undefined") return;
-  window.dispatchEvent(new CustomEvent(USAGE_EVENT, { detail: snapshot }));
+  usageSeq += 1;
+  const stamped = stampUsageSnapshot(snapshot, {
+    origin: usageOriginId,
+    seq: usageSeq,
+    at: Date.now(),
+  });
+  window.dispatchEvent(new CustomEvent(USAGE_EVENT, { detail: stamped }));
   void import("@tauri-apps/api/event")
-    .then(({ emit }) => emit(USAGE_EVENT, snapshot))
+    .then(({ emit }) => emit(USAGE_EVENT, stamped))
     .catch(() => {
       /* not in tauri */
     });
 }
 
-/** A snapshot that came from another window must not be re-broadcast. */
+/**
+ * A snapshot from another window: never re-broadcast, and dropped when it is
+ * older than one already applied from that same window.
+ */
 function applyPeerUsageSnapshot(snapshot: UsageSnapshot) {
+  if (isStalePeerSnapshot(peerUsageSeq, snapshot)) return;
+  recordPeerSnapshot(peerUsageSeq, snapshot);
   applyUsageSnapshot({ ...snapshot, source: "peer-window" }, { broadcast: false });
 }
 
@@ -318,6 +342,8 @@ function applyCachedProfile(token: string, profile: CachedProfile) {
 }
 
 async function saveToken(token: string | null) {
+  // Every token change invalidates in-flight account fetches.
+  sessionGeneration += 1;
   try {
     if (token) localStorage.setItem(STORAGE_KEY, token);
     else localStorage.removeItem(STORAGE_KEY);
@@ -454,6 +480,7 @@ function revalidateIfStale() {
 }
 
 async function applyToken(token: string | null, allowRefresh = true) {
+  const generation = sessionGeneration;
   if (!token) {
     clearShapeCatalog();
     saveCachedProfile(null);
@@ -481,6 +508,9 @@ async function applyToken(token: string | null, allowRefresh = true) {
 
   try {
     const account = await fetchAccount(token);
+    // Signed out, or the token rotated, while this was in flight. Writing now
+    // would resurrect a session the user has already left.
+    if (generation !== sessionGeneration) return;
     saveCachedProfile({
       userId: account.id,
       email: account.email,
@@ -524,6 +554,8 @@ async function applyToken(token: string | null, allowRefresh = true) {
       void refreshShapeRuntime({ userId: account.id, tier: account.tier }).catch(() => undefined);
     }
   } catch (err) {
+    // The session moved on while the request was in flight — stay out of it.
+    if (generation !== sessionGeneration) return;
     const isAuthError =
       err instanceof ShapeApiError && (err.status === 401 || err.status === 404);
     const isNetwork =

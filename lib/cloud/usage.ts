@@ -42,6 +42,12 @@ export type UsageSnapshotFields = {
 
 export type UsageSnapshot = UsageSnapshotFields & {
   source?: UsageSnapshotSource;
+  /** Producer clock, ms epoch. Informational — clocks differ between windows. */
+  at?: number;
+  /** Producer-local monotonic counter. */
+  seq?: number;
+  /** Producer id, so counters from different windows never collide. */
+  origin?: string;
 };
 
 function isUsableNumber(value: unknown): value is number {
@@ -138,6 +144,61 @@ export function isUsageStale(
 ): boolean {
   if (typeof usageUpdatedAt !== "number" || !Number.isFinite(usageUpdatedAt)) return true;
   return now - usageUpdatedAt > maxAgeMs;
+}
+
+/** Stamp a snapshot for broadcast so receivers can reject out-of-order copies. */
+export function stampUsageSnapshot(
+  snapshot: UsageSnapshot,
+  stamp: { origin: string; seq: number; at: number },
+): UsageSnapshot {
+  return { ...snapshot, origin: stamp.origin, seq: stamp.seq, at: stamp.at };
+}
+
+/**
+ * True when this snapshot is older than one already applied from the same
+ * origin.
+ *
+ * Tauri dispatches every `emit` as its own task, so two snapshots sent back to
+ * back can reach another window in either order. Without this, a stale balance
+ * could overwrite the fresh one and the ring would sit wrong until the next
+ * poll. Unversioned snapshots are applied — better late data than none.
+ */
+export function isStalePeerSnapshot(
+  seen: ReadonlyMap<string, number>,
+  snapshot: UsageSnapshot,
+): boolean {
+  const { origin, seq } = snapshot;
+  if (!origin || typeof seq !== "number" || !Number.isFinite(seq)) return false;
+  const last = seen.get(origin);
+  return typeof last === "number" && seq <= last;
+}
+
+/** Remember the newest seq seen from an origin. */
+export function recordPeerSnapshot(
+  seen: Map<string, number>,
+  snapshot: UsageSnapshot,
+): void {
+  const { origin, seq } = snapshot;
+  if (!origin || typeof seq !== "number" || !Number.isFinite(seq)) return;
+  seen.set(origin, seq);
+}
+
+/** Human age of the current numbers, for the surfaces that show raw figures. */
+export function formatUsageFreshness(
+  usageUpdatedAt: number | null | undefined,
+  now: number,
+): string {
+  if (typeof usageUpdatedAt !== "number" || !Number.isFinite(usageUpdatedAt)) {
+    return "Not synced yet";
+  }
+  const secs = Math.max(0, Math.round((now - usageUpdatedAt) / 1000));
+  if (secs < 5) return "Updated just now";
+  if (secs < 60) return `Updated ${secs}s ago`;
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `Updated ${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `Updated ${hours}h ago`;
+  return `Updated ${Math.round(hours / 24)}d ago`;
 }
 
 /**

@@ -2,8 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
     USAGE_STALE_MS,
     UsageRefreshScheduler,
+    formatUsageFreshness,
+    isStalePeerSnapshot,
     isUsageStale,
     mergeUsageSnapshot,
+    recordPeerSnapshot,
+    stampUsageSnapshot,
     usageSnapshotFromAccount,
     usageSnapshotFromCheck,
 } from "@/lib/cloud/usage";
@@ -103,6 +107,66 @@ describe("isUsageStale", () => {
     it("is fresh inside the window and stale past it", () => {
         expect(isUsageStale(1_000, 1_000 + USAGE_STALE_MS)).toBe(false);
         expect(isUsageStale(1_000, 1_000 + USAGE_STALE_MS + 1)).toBe(true);
+    });
+});
+
+describe("peer snapshot ordering", () => {
+    it("applies unversioned snapshots rather than dropping live data", () => {
+        expect(isStalePeerSnapshot(new Map(), { creditsRemaining: 1 })).toBe(false);
+        expect(isStalePeerSnapshot(new Map([["a", 5]]), { creditsRemaining: 1 })).toBe(false);
+    });
+
+    it("accepts the first snapshot from an origin, then only newer ones", () => {
+        const seen = new Map<string, number>();
+        const first = { creditsRemaining: 900, origin: "win-a", seq: 1 };
+        const second = { creditsRemaining: 800, origin: "win-a", seq: 2 };
+
+        expect(isStalePeerSnapshot(seen, first)).toBe(false);
+        recordPeerSnapshot(seen, first);
+
+        expect(isStalePeerSnapshot(seen, second)).toBe(false);
+        recordPeerSnapshot(seen, second);
+
+        // The seq 1 copy arriving late must not overwrite the seq 2 numbers.
+        expect(isStalePeerSnapshot(seen, first)).toBe(true);
+        expect(isStalePeerSnapshot(seen, second)).toBe(true);
+    });
+
+    it("keeps counters per origin so two windows never block each other", () => {
+        const seen = new Map<string, number>();
+        recordPeerSnapshot(seen, { origin: "win-a", seq: 7 });
+
+        expect(isStalePeerSnapshot(seen, { origin: "win-b", seq: 1 })).toBe(false);
+        expect(isStalePeerSnapshot(seen, { origin: "win-a", seq: 7 })).toBe(true);
+        expect(isStalePeerSnapshot(seen, { origin: "win-a", seq: 8 })).toBe(false);
+    });
+
+    it("stamps a snapshot with the producer identity", () => {
+        expect(
+            stampUsageSnapshot({ creditsRemaining: 5 }, { origin: "win-a", seq: 3, at: 1234 }),
+        ).toEqual({ creditsRemaining: 5, origin: "win-a", seq: 3, at: 1234 });
+    });
+});
+
+describe("formatUsageFreshness", () => {
+    const now = 1_700_000_000_000;
+
+    it("reports an unsynced store plainly", () => {
+        expect(formatUsageFreshness(null, now)).toBe("Not synced yet");
+        expect(formatUsageFreshness(undefined, now)).toBe("Not synced yet");
+    });
+
+    it("walks seconds, minutes, hours and days", () => {
+        expect(formatUsageFreshness(now, now)).toBe("Updated just now");
+        expect(formatUsageFreshness(now - 4_000, now)).toBe("Updated just now");
+        expect(formatUsageFreshness(now - 45_000, now)).toBe("Updated 45s ago");
+        expect(formatUsageFreshness(now - 5 * 60_000, now)).toBe("Updated 5m ago");
+        expect(formatUsageFreshness(now - 3 * 3_600_000, now)).toBe("Updated 3h ago");
+        expect(formatUsageFreshness(now - 2 * 86_400_000, now)).toBe("Updated 2d ago");
+    });
+
+    it("never reports a negative age when clocks disagree", () => {
+        expect(formatUsageFreshness(now + 60_000, now)).toBe("Updated just now");
     });
 });
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+    formatLastTurnDelta,
     formatMessageModelLabel,
     formatMessageUsageLine,
     formatModelLabel,
@@ -74,6 +75,88 @@ describe("usage-display", () => {
         ]);
         expect(formatMessageUsageRows({ usedAuto: true }, "auto")).toEqual([]);
         expect(formatMessageUsageRows(undefined, "auto")).toEqual([]);
+    });
+
+    it("appends what the last turn cost while it is still recent", () => {
+        const now = 1_700_000_000_000;
+        const auth = {
+            loggedIn: true,
+            tier: "pro" as const,
+            freeAutoPercent: 18,
+            creditsIncluded: 1500,
+            creditsRemaining: 1200,
+        };
+
+        expect(
+            resolveChatUsageDisplay(
+                "auto",
+                auth,
+                { tokens: 12_400, inputTokens: 10_000, creditsCharged: 0, usedAuto: true, at: now - 1_000 },
+                now,
+            ).tooltip,
+        ).toBe("18% used this month (Auto) · +12,400 tokens last turn");
+
+        expect(
+            resolveChatUsageDisplay(
+                "anthropic/claude-sonnet-4",
+                auth,
+                { tokens: 0, inputTokens: 0, creditsCharged: 1.25, usedAuto: false, at: now - 1_000 },
+                now,
+            ).tooltip,
+        ).toBe("300.00 out of 1,500.00 this month · +1.25 credits last turn");
+    });
+
+    it("drops the last-turn figure once it is history or empty", () => {
+        const now = 1_700_000_000_000;
+        const auth = {
+            loggedIn: true,
+            tier: "pro" as const,
+            freeAutoPercent: 18,
+            creditsIncluded: 1500,
+            creditsRemaining: 1200,
+        };
+
+        // Older than the 15 minute window.
+        expect(
+            resolveChatUsageDisplay(
+                "auto",
+                auth,
+                { tokens: 12_400, inputTokens: 0, creditsCharged: 0, usedAuto: true, at: now - 16 * 60_000 },
+                now,
+            ).tooltip,
+        ).toBe("18% used this month (Auto)");
+
+        // A turn that charged nothing says nothing.
+        expect(
+            resolveChatUsageDisplay(
+                "anthropic/claude-sonnet-4",
+                auth,
+                { tokens: 0, inputTokens: 0, creditsCharged: 0, usedAuto: false, at: now },
+                now,
+            ).tooltip,
+        ).toBe("300.00 out of 1,500.00 this month");
+
+        expect(resolveChatUsageDisplay("auto", auth, null, now).tooltip).toBe(
+            "18% used this month (Auto)",
+        );
+    });
+
+    it("formats the last-turn delta on its own", () => {
+        const now = 1_700_000_000_000;
+        expect(
+            formatLastTurnDelta(
+                { tokens: 5_000, inputTokens: 0, creditsCharged: 0, usedAuto: true, at: now },
+                now,
+            ),
+        ).toBe("+5,000 tokens last turn");
+        expect(
+            formatLastTurnDelta(
+                { tokens: 0, inputTokens: 0, creditsCharged: 2, usedAuto: false, at: now },
+                now,
+            ),
+        ).toBe("+2.00 credits last turn");
+        expect(formatLastTurnDelta(null, now)).toBeNull();
+        expect(formatLastTurnDelta(undefined, now)).toBeNull();
     });
 
     it("resolves chat ring from monthly Auto or credits usage", () => {

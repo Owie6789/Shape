@@ -102,6 +102,34 @@ function formatCredits(n: number): string {
     return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+/** Age after which the last-turn figure is history, not feedback. */
+const LAST_TURN_TTL_MS = 15 * 60 * 1000;
+
+/**
+ * What the most recent turn cost, for the ring tooltip.
+ *
+ * The monthly percentage only moves when the server confirms it, so this is the
+ * immediate confirmation that the turn just spent something. `now` is injectable
+ * to keep the function pure for tests.
+ */
+export function formatLastTurnDelta(
+    lastTurn?: LastTurnUsage | null,
+    now: number = Date.now(),
+): string | null {
+    if (!lastTurn) return null;
+    if (!Number.isFinite(lastTurn.at) || now - lastTurn.at > LAST_TURN_TTL_MS) return null;
+    if (lastTurn.usedAuto) {
+        const tokens = lastTurn.tokens ?? 0;
+        return tokens > 0 ? `+${tokens.toLocaleString()} tokens last turn` : null;
+    }
+    const credits = lastTurn.creditsCharged ?? 0;
+    return credits > 0 ? `+${formatCredits(credits)} credits last turn` : null;
+}
+
+function withDelta(tooltip: string, delta: string | null): string {
+    return delta ? `${tooltip} · ${delta}` : tooltip;
+}
+
 export function resolveChatUsageDisplay(
     selectedModel: string,
     auth: Pick<
@@ -114,7 +142,8 @@ export function resolveChatUsageDisplay(
         | "creditsIncluded"
         | "creditsRemaining"
     >,
-    _lastTurn?: LastTurnUsage | null,
+    lastTurn?: LastTurnUsage | null,
+    now: number = Date.now(),
 ): ChatUsageDisplay {
     if (!auth.loggedIn) {
         if (auth.isLoading || auth.revalidating) {
@@ -136,6 +165,7 @@ export function resolveChatUsageDisplay(
     }
 
     const usingAuto = selectedModel === "auto" || isAutoModelId(selectedModel) || auth.tier === "free";
+    const delta = formatLastTurnDelta(lastTurn, now);
 
     if (usingAuto) {
         const percent = Math.max(0, Math.min(100, Math.round(auth.freeAutoPercent ?? 0)));
@@ -145,7 +175,7 @@ export function resolveChatUsageDisplay(
             percent,
             title,
             detail: title,
-            tooltip: `${title} this month (Auto)`,
+            tooltip: withDelta(`${title} this month (Auto)`, delta),
         };
     }
 
@@ -159,7 +189,7 @@ export function resolveChatUsageDisplay(
             percent,
             title,
             detail: title,
-            tooltip: `${title} this month`,
+            tooltip: withDelta(`${title} this month`, delta),
             used,
             included,
         };

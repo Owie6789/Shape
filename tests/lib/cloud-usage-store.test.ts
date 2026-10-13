@@ -170,6 +170,78 @@ describe("cloud usage store fast path", () => {
         }
     });
 
+    it("drops an out-of-order snapshot from another window", async () => {
+        await signIn();
+
+        const older = { creditsRemaining: 1_000, freeAutoPercent: 20, origin: "win-b", seq: 1 };
+        const newer = { creditsRemaining: 400, freeAutoPercent: 61, origin: "win-b", seq: 2 };
+
+        window.dispatchEvent(new CustomEvent("shape-usage-changed", { detail: newer }));
+        expect(getShapeAuthState().creditsRemaining).toBe(400);
+
+        // Tauri dispatches each emit as its own task, so seq 1 can land second.
+        window.dispatchEvent(new CustomEvent("shape-usage-changed", { detail: older }));
+
+        expect(getShapeAuthState().creditsRemaining).toBe(400);
+        expect(getShapeAuthState().freeAutoPercent).toBe(61);
+    });
+
+    it("still accepts a newer snapshot from the same window afterwards", async () => {
+        await signIn();
+
+        window.dispatchEvent(
+            new CustomEvent("shape-usage-changed", {
+                detail: { creditsRemaining: 400, origin: "win-c", seq: 2 },
+            }),
+        );
+        window.dispatchEvent(
+            new CustomEvent("shape-usage-changed", {
+                detail: { creditsRemaining: 250, origin: "win-c", seq: 3 },
+            }),
+        );
+
+        expect(getShapeAuthState().creditsRemaining).toBe(250);
+    });
+
+    it("does not let an in-flight account fetch resurrect a signed-out session", async () => {
+        await signIn();
+
+        // An account request that only settles once the test releases it.
+        let release: (() => void) | null = null;
+        let accountStarted = false;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (input: RequestInfo | URL) => {
+                const url = String(input);
+                if (/\/api\/account(?!\/)/.test(url)) {
+                    accountStarted = true;
+                    await gate;
+                    return jsonReply(ACCOUNT);
+                }
+                return jsonReply({});
+            }),
+        );
+
+        const inFlight = refreshShapeAuth();
+        await vi.waitFor(() => expect(accountStarted).toBe(true));
+
+        // Sign out while that refresh is still in flight.
+        await logoutShape();
+        expect(getShapeAuthState().loggedIn).toBe(false);
+
+        release?.();
+        await inFlight;
+
+        // The stale response lands after sign-out and must be ignored.
+        expect(getShapeAuthState().loggedIn).toBe(false);
+        expect(getShapeAuthState().creditsRemaining).toBe(0);
+        expect(getShapeAuthState().email).toBeNull();
+        expect(getShapeAuthState().accessToken).toBeNull();
+    });
+
     it("rebroadcasts a snapshot it produced itself so other windows catch up", async () => {
         await signIn();
         const { seen, restore } = watchUsageBroadcasts();

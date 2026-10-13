@@ -1,7 +1,7 @@
 "use client";
 
 import { Open20Regular } from "@fluentui/react-icons/headless/svg/open";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Icon } from "@/components/ui/icon";
 import { Button } from "@/components/ui/button";
 
@@ -16,10 +16,22 @@ import {
 } from "@/lib/cloud/store";
 import { requestShapeLogin } from "@/features/agent/workbench/ui/login-prompt-dialog";
 import { SHAPE_API_BASE } from "@/lib/cloud/api";
+import { formatUsageFreshness } from "@/lib/cloud/usage";
 import { commands } from "@/lib/backend";
+import { cn } from "@/lib/utils";
 
 function tierLabel(tier: string) {
     return tier.charAt(0).toUpperCase() + tier.slice(1);
+}
+
+/** Ticking clock so the "Updated Xs ago" label does not quietly go stale itself. */
+function useNow(intervalMs: number) {
+    const [now, setNow] = useState(() => Date.now());
+    useEffect(() => {
+        const id = setInterval(() => setNow(Date.now()), intervalMs);
+        return () => clearInterval(id);
+    }, [intervalMs]);
+    return now;
 }
 
 export function AccountSettingsPanel() {
@@ -32,6 +44,8 @@ export function AccountSettingsPanel() {
     }, [auth.creditsIncluded, auth.creditsRemaining]);
 
     const freeAutoPercent = auth.freeAutoPercent ?? 0;
+    const now = useNow(30_000);
+    const freshness = formatUsageFreshness(auth.usageUpdatedAt, now);
     const resetLabel = useMemo(() => {
         const iso = auth.currentPeriodEnd;
         const date = iso
@@ -145,8 +159,20 @@ export function AccountSettingsPanel() {
             <SettingSection title="Credits">
                 <SettingCard>
                     <div className="px-3.5 py-3">
-                        <div className="text-sm font-medium text-text-primary">
-                            {auth.creditsIncluded > 0 ? `${Math.max(0, 100 - creditPercent)}% remaining` : "Premium credits"}
+                        <div className="flex items-start justify-between gap-3">
+                            <div className="text-sm font-medium text-text-primary">
+                                {auth.creditsIncluded > 0 ? `${Math.max(0, 100 - creditPercent)}% remaining` : "Premium credits"}
+                            </div>
+                            <span
+                                className={cn(
+                                    "shrink-0 text-xs tabular-nums",
+                                    auth.offline ? "text-warning" : "text-text-muted",
+                                )}
+                                title={auth.offline ? "Last known figures — Shape Cloud is unreachable" : undefined}
+                            >
+                                {auth.offline ? "Offline · " : ""}
+                                {freshness}
+                            </span>
                         </div>
                         <div className="mt-0.5 text-xs text-text-muted">
                             {auth.creditsIncluded > 0
