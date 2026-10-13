@@ -5,6 +5,17 @@ import nextTs from "eslint-config-next/typescript";
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
+  // Build artifacts of `npm run build:runtime` (esbuild, minified) and the
+  // vendored Tailwind browser build copied next to them. Linting generated
+  // output only produces noise that hides real findings in source.
+  globalIgnores(["src-tauri/runtime/**", "public/preview/**"]),
+  {
+    // CommonJS build tooling, run directly by node — `require` is correct here.
+    files: ["src-tauri/scripts/**/*.js", "scripts/**/*.mjs"],
+    rules: {
+      "@typescript-eslint/no-require-imports": "off",
+    },
+  },
   // Override default ignores of eslint-config-next.
   globalIgnores([
     // Default ignores of eslint-config-next:
@@ -18,18 +29,6 @@ const eslintConfig = defineConfig([
     // Generated docs search index
     "docs/generated/**",
   ]),
-  // Build artifacts of `npm run build:runtime` (esbuild, minified) and the
-  // vendored Tailwind browser build copied next to them. Linting generated
-  // output only produces noise that hides real findings in source. Kept as a
-  // separate block so it does not collide with edits to the list above.
-  globalIgnores(["src-tauri/runtime/**", "public/preview/**"]),
-  {
-    // CommonJS build tooling, run directly by node — `require` is correct here.
-    files: ["src-tauri/scripts/**/*.js", "scripts/**/*.mjs"],
-    rules: {
-      "@typescript-eslint/no-require-imports": "off",
-    },
-  },
 ]);
 
 export default eslintConfig;
