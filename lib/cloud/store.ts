@@ -382,10 +382,20 @@ function applyCachedProfile(token: string, profile: CachedProfile) {
 
 async function saveToken(token: string | null) {
   // Every token change invalidates in-flight account fetches, including a
-  // rotation. The retry after a rotation is a fresh applyToken() call that
-  // re-reads this counter, so it is never dropped. What the bump does catch is
-  // a load that was captured against the pre-rotation token: letting that one
-  // land would write the superseded token back over the one we just minted.
+  // rotation. What the bump catches is a load captured against the
+  // pre-rotation token: letting that one land would write the superseded token
+  // back over the one we just minted.
+  //
+  // A rotation is the case this is heaviest-handed about. shapeApiFetch retries
+  // the request itself once the new token lands, but that retry returns into
+  // the applyToken() call that captured the pre-rotation generation, so the
+  // response is discarded here rather than applied. The account is then loaded
+  // by the applyToken() that broadcastAuthChange() triggers below, which
+  // re-reads the counter. Verified: rotation makes three /api/account calls
+  // where two would do, and the third is what actually applies the account.
+  // Suppressing the broadcast without replacing that load leaves the balance
+  // at the pre-rotation figure. Tracked as a known inefficiency; see the
+  // discussion on the PR.
   sessionGeneration += 1;
   try {
     if (token) localStorage.setItem(STORAGE_KEY, token);
