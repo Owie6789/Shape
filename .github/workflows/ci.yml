@@ -142,7 +142,17 @@ jobs:
           rust-components: "rustfmt,clippy"
 
       - name: Cargo fmt (check)
-        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+        run: |
+          set -o pipefail
+          if ! cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check 2>&1 | tee fmt-check.txt; then
+            echo "::error::Rust formatting check failed - run 'cargo fmt --manifest-path src-tauri/Cargo.toml --all' locally"
+            echo "Diff:"
+            cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check --print-diff 2>&1 || true
+            # Also try to show which files are unformatted
+            cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check -l 2>&1 || true
+            exit 1
+          fi
+          echo "✓ Rust formatting check passed"
 
       - name: Cargo clippy (deny warnings)
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
