@@ -17,6 +17,11 @@ const eslintConfig = defineConfig([
     "src-tauri/scripts/**",
     // Generated docs search index
     "docs/generated/**",
+    // Generated preview runtime bundles (esbuild output)
+    "src-tauri/runtime/**",
+    "public/preview/**",
+    // Coverage
+    "coverage/**",
   ]),
 ]);
 
