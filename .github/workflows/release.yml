@@ -193,6 +193,7 @@ jobs:
       # SBOM generation for supply-chain transparency - best effort but warn if fails
       - name: Generate SBOM (CycloneDX)
         uses: anchore/sbom-action@v0
+        continue-on-error: true
         with:
           path: dist/release/
           format: cyclonedx-json
@@ -257,12 +258,15 @@ jobs:
               echo "Create the tag first with 'git tag $TAG && git push origin $TAG' or dispatch from the tag"
               exit 1
             fi
-            # Verify tag points to HEAD or current commit is the tagged commit
+            # Verify tag points to HEAD - fail if input tag doesn't match current commit
+            # Prevents publishing assets built from tag A under tag B when dispatching from A with input B
             TAG_COMMIT=$(git rev-list -n 1 "refs/tags/$TAG" 2>/dev/null || true)
             HEAD_COMMIT=$(git rev-parse HEAD)
             if [ "$TAG_COMMIT" != "$HEAD_COMMIT" ]; then
-              echo "::warning::Input tag $TAG points to $TAG_COMMIT but HEAD is $HEAD_COMMIT"
-              echo "This could be a branch dispatch - verifying tag exists but allowing (build job already verified)"
+              echo "::error::Input tag $TAG points to $TAG_COMMIT but HEAD is $HEAD_COMMIT"
+              echo "Refusing to publish: assets were built from HEAD ($HEAD_COMMIT) but would be published under $TAG ($TAG_COMMIT)"
+              echo "Dispatch the workflow from the tag $TAG itself, not from another tag/branch"
+              exit 1
             fi
           else
             TAG="${GITHUB_REF_NAME}"
