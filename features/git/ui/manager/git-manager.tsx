@@ -93,6 +93,7 @@ function GitManagerIntro({ children }: { children: React.ReactNode }) {
 
     useEffect(() => {
         let cancelled = false;
+        let t1: number | undefined;
         let t2: number | undefined;
 
         try {
@@ -108,7 +109,7 @@ function GitManagerIntro({ children }: { children: React.ReactNode }) {
             if (!cancelled) setVisible(true);
         });
 
-        const t1 = window.setTimeout(() => {
+        t1 = window.setTimeout(() => {
             if (cancelled) return;
             setVisible(false);
             t2 = window.setTimeout(() => {

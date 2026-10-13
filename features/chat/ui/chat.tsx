@@ -3,7 +3,6 @@
 import React, { useMemo } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
-import { toTimestampMs } from "@/lib/ui/timestamp";
 import { useChatSession } from "../lib/use-chat-session";
 import { ChatTitlebar, resolveChatCrumbTitle } from "./shell/titlebar";
 import { ChatInput } from "./composer/input";
@@ -165,14 +164,10 @@ export default function Chat({
 
     const extractedSubagents = useMemo(() => {
         const parentId = session.conversationId ?? session.activeChatTabId ?? undefined;
-        const seen = new Map<string, { id: string; title: string; task?: string; model?: string; transcript?: string; status: "pending" | "running" | "done" | "error"; updatedAt: number }>();
+        const seen = new Map<string, { id: string; title: string; task?: string; model?: string; transcript?: string; status: "pending" | "running" | "done" | "error" }>();
         for (const m of session.messages) {
-            // Stamp from the message that carried the update rather than reading the
-            // clock during render. Render stays pure, and a restored chat now shows
-            // when the subagent actually ran instead of the moment it was opened.
-            const updatedAt = toTimestampMs(m.timestamp);
             for (const item of extractSubagentsFromText(m.content || "", parentId)) {
-                seen.set(item.id, { ...item, updatedAt });
+                seen.set(item.id, item);
             }
         }
         return [...seen.values()].map((item) => ({
@@ -184,7 +179,7 @@ export default function Chat({
             transcript: item.transcript,
             status: item.status,
             parentId,
-            updatedAt: item.updatedAt,
+            updatedAt: Date.now(),
         }));
     }, [session.messages, session.conversationId, session.activeChatTabId]);
 

@@ -48,7 +48,6 @@ import {
     processAttachment,
     type ComposerAttachment,
 } from "@/features/chat/ui/composer/attachments";
-import { type ReasoningEffort } from "@/features/chat/ui/composer/reasoning-effort";
 
 function chatTabsStorageKey(projectPath: string | null | undefined) {
     const norm = (projectPath || "").replace(/\\/g, "/").toLowerCase();
@@ -102,8 +101,7 @@ function writePersistedChatTabs(
 
 const COMPOSER_PREFS_KEY = "shape-composer";
 
-/** Same stops the composer picker offers — one source of truth. */
-type ComposerEffort = ReasoningEffort;
+type ComposerEffort = "low" | "high" | "ultra" | "max" | "super";
 type ComposerPrefs = { model?: string; effort?: ComposerEffort; fast?: boolean };
 
 function readComposerPrefs(): ComposerPrefs {
@@ -279,7 +277,7 @@ export function useChatSession() {
                             clearAllDesignPreviewSessions();
                             setContextSummarized(false);
                         }
-                    } catch (err) {
+                    } catch {
                         // Ephemeral / deleted tabs — fall back to a draft quietly.
                         if (!cancelled) {
                             setOpenChatTabs([{ id: NEW_CHAT_TAB_ID, title: "New Chat" }]);
@@ -546,17 +544,20 @@ export function useChatSession() {
         }
     };
 
-    const handleAcceptEdit = async (editId: string) => {
-        const edit = pendingEdits.find((e) => e.id === editId);
-        if (!edit) return;
-        await markEditResolved(edit.file, "applied", edit.replacement);
-        const resolved = resolveChatFilePath(edit.file, project_path);
-        window.dispatchEvent(
-            new CustomEvent("shape-dismiss-diff", {
-                detail: { path: resolved, rawPath: edit.file },
-            }),
-        );
-    };
+    const handleAcceptEdit = React.useCallback(
+        async (editId: string) => {
+            const edit = pendingEdits.find((e) => e.id === editId);
+            if (!edit) return;
+            await markEditResolved(edit.file, "applied", edit.replacement);
+            const resolved = resolveChatFilePath(edit.file, project_path);
+            window.dispatchEvent(
+                new CustomEvent("shape-dismiss-diff", {
+                    detail: { path: resolved, rawPath: edit.file },
+                }),
+            );
+        },
+        [pendingEdits, project_path, markEditResolved],
+    );
 
     const handleRejectEdit = async (editId: string) => {
         const idx = pendingEdits.findIndex((e) => e.id === editId);
@@ -1267,7 +1268,7 @@ export function useChatSession() {
                 console.error("Failed to fork chat:", err);
             }
         },
-        [refreshHistory, setMessages, setConversationId, setCurrentConversationId, setChatTitle, setViewingConversation, syncOpenTabs],
+        [refreshHistory, setMessages, setConversationId, setChatTitle, setViewingConversation, syncOpenTabs],
     );
 
     React.useEffect(() => {
@@ -1411,7 +1412,7 @@ export function useChatSession() {
             return [{ id: DEMO_CHAT_TAB_ID, title: "Demo" }, ...others];
         });
         window.dispatchEvent(new Event("shape-chat-focus-input"));
-    }, [setMessages, setContextSummarized]);
+    }, [setMessages, setContextSummarized, setSendError]);
 
     React.useEffect(() => {
         const onDemo = () => openDemoChat();
