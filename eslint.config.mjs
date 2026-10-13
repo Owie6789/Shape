@@ -13,6 +13,10 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
     "src-tauri/target/**",
+    // One-off migration scripts not part of app
+    "src-tauri/scripts/**",
+    // Generated docs search index
+    "docs/generated/**",
   ]),
 ]);
 

@@ -1,42 +1,64 @@
-# EXAMPLE USAGE:
-#
-#   Refer for explanation to following link:
-#   https://lefthook.dev/configuration/
-#
-# pre-push:
-#   jobs:
-#     - name: packages audit
-#       tags:
-#         - frontend
-#         - security
-#       run: yarn audit
-#
-#     - name: gems audit
-#       tags:
-#         - backend
-#         - security
-#       run: bundle audit
-#
-# pre-commit:
-#   parallel: true
-#   jobs:
-#     - run: yarn eslint {staged_files}
-#       glob: "*.{js,ts,jsx,tsx}"
-#
-#     - name: rubocop
-#       glob: "*.rb"
-#       exclude:
-#         - config/application.rb
-#         - config/routes.rb
-#       run: bundle exec rubocop --force-exclusion -- {all_files}
-#
-#     - name: govet
-#       files: git ls-files -m
-#       glob: "*.go"
-#       run: go vet -- {files}
-#
-#     - script: "hello.js"
-#       runner: node
-#
-#     - script: "hello.go"
-#       runner: go run
+# Lefthook - Git hooks for Shape
+# https://lefthook.dev/configuration/
+# Install: npm install -g lefthook && lefthook install
+# Or: npx lefthook install
+
+pre-commit:
+  parallel: true
+  jobs:
+    - name: eslint (staged)
+      glob: "*.{js,ts,jsx,tsx,mjs,cjs}"
+      run: npx eslint --max-warnings=0 {staged_files}
+
+    - name: typecheck (fast)
+      # Run tsc on whole project - fast enough for pre-commit, catches type errors early
+      run: npx tsc --noEmit --pretty
+      # Skip if only docs changed
+      skip:
+        - ref: main
+
+    - name: rust fmt check
+      glob: "*.rs"
+      run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+
+    - name: version sync check
+      # Only when version files touched
+      glob: "{package.json,src-tauri/tauri.conf.json,src-tauri/Cargo.toml}"
+      run: |
+        node scripts/release/version.mjs
+        if ! git diff --quiet -- src-tauri/tauri.conf.json src-tauri/Cargo.toml; then
+          echo "Version files out of sync! Run 'npm run sync-version' and re-stage."
+          git diff -- src-tauri/tauri.conf.json src-tauri/Cargo.toml
+          exit 1
+        fi
+
+pre-push:
+  jobs:
+    - name: tests (js)
+      run: npm run test
+
+    - name: tests (rust)
+      run: cargo test --manifest-path src-tauri/Cargo.toml --all-features --quiet
+      # Only run rust tests if rust files changed or it's a push to main
+      skip:
+        - ref: main
+
+commit-msg:
+  jobs:
+    - name: conventional commit lint
+      run: |
+        MSG=$(cat {1})
+        # Allow: area: description, or conventional types
+        if echo "$MSG" | head -n1 | grep -Eq '^[a-z0-9-]+(\([^)]+\))?: .{5,}$'; then
+          exit 0
+        fi
+        if echo "$MSG" | head -n1 | grep -Eq '^(feat|fix|chore|docs|ci|refactor|test|perf|build|style|security|release)(\(.+\))?: .{5,}$'; then
+          exit 0
+        fi
+        if echo "$MSG" | head -n1 | grep -Eq '^Merge '; then
+          exit 0
+        fi
+        echo "Commit message should be 'area: short summary' (e.g. 'agent: fix streaming race')"
+        echo "Got: $(head -n1 {1})"
+        echo "See COMMIT.md or docs/developing/ci-cd.mdx"
+        exit 1

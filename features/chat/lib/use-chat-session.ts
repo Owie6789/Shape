@@ -196,7 +196,7 @@ export function useChatSession() {
     const [selectedMode, setSelectedMode] = React.useState("Code");
     const selectedModeRef = React.useRef(selectedMode);
     selectedModeRef.current = selectedMode;
-    const [reasoningEffort, setReasoningEffort] = React.useState<"low" | "high" | "ultra" | "max">(
+    const [reasoningEffort, setReasoningEffort] = React.useState<ComposerEffort>(
         () => readComposerPrefs().effort || "low",
     );
     const [fastMode, setFastMode] = React.useState(() => readComposerPrefs().fast ?? true);
