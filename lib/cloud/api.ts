@@ -136,7 +136,10 @@ export async function fetchAccount(token: string) {
 export async function checkUsage(
   token: string,
   model: string,
-  userId?: string | null,
+  // Required, not optional: the result is applied to the signed-in account,
+  // and an untagged one has nothing to be rejected against if the session
+  // moves on before the response lands.
+  userId: string | null,
 ) {
   const cacheKey = `${token}:${model}`;
   const now = Date.now();

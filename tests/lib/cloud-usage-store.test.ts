@@ -125,7 +125,7 @@ describe("cloud usage store fast path", () => {
         await signIn(ACCOUNT, { allowed: true, creditsRemaining: 610, tier: "pro" });
         expect(getShapeAuthState().creditsRemaining).toBe(1200);
 
-        const result = await checkUsage("token-1", "anthropic/claude-sonnet-4");
+        const result = await checkUsage("token-1", "anthropic/claude-sonnet-4", "user-1");
 
         expect(result.creditsRemaining).toBe(610);
         // The tap is a floating promise; let it land.
