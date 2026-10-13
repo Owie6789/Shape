@@ -6,6 +6,12 @@ export type LastTurnUsage = {
     creditsCharged: number;
     usedAuto: boolean;
     at: number;
+    /**
+     * Whose turn this was. The record is module-global, so without this a
+     * second account signing in inside the TTL would be shown the previous
+     * user's last-turn cost.
+     */
+    userId: string | null;
 };
 
 let lastTurn: LastTurnUsage | null = null;
@@ -24,6 +30,7 @@ export function setLastTurnUsage(next: {
     inputTokens?: number;
     creditsCharged?: number;
     usedAuto?: boolean;
+    userId?: string | null;
 } | null) {
     if (!next) {
         lastTurn = null;
@@ -36,7 +43,15 @@ export function setLastTurnUsage(next: {
         creditsCharged: next.creditsCharged ?? 0,
         usedAuto: Boolean(next.usedAuto),
         at: Date.now(),
+        userId: next.userId ?? null,
     };
+    emit();
+}
+
+/** Drop the record. Called when the session ends so it cannot outlive its owner. */
+export function clearLastTurnUsage() {
+    if (lastTurn === null) return;
+    lastTurn = null;
     emit();
 }
 

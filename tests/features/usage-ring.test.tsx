@@ -218,10 +218,31 @@ describe("sidebar usage ring", () => {
         expect(tooltip(el)).toBe("18% used this month (Auto)");
 
         act(() => {
-            setLastTurnUsage({ tokens: 8_200, creditsCharged: 0, usedAuto: true });
+            setLastTurnUsage({ tokens: 8_200, creditsCharged: 0, usedAuto: true, userId: "user-1" });
         });
 
         expect(tooltip(el)).toBe("18% used this month (Auto) · +8,200 tokens last turn");
+    });
+
+    it("falls back to tokens when a premium turn reports no credit charge", async () => {
+        const el = await mountSignedInRing(PREMIUM_MODEL);
+
+        act(() => {
+            setLastTurnUsage({ tokens: 4_100, creditsCharged: 0, usedAuto: false, userId: "user-1" });
+        });
+
+        expect(tooltip(el)).toContain("+4,100 tokens last turn");
+    });
+
+    it("does not show one account's turn cost to the next account", async () => {
+        const el = await mountSignedInRing("auto");
+
+        act(() => {
+            // A turn recorded by a different user, still inside the TTL.
+            setLastTurnUsage({ tokens: 9_900, creditsCharged: 0, usedAuto: true, userId: "someone-else" });
+        });
+
+        expect(tooltip(el)).toBe("18% used this month (Auto)");
     });
 
     it("switches to the warning colour as the limit approaches", async () => {

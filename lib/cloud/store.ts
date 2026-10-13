@@ -16,6 +16,7 @@ import type { ShapeAuthState, ShapeTier, UsageCheckResult } from "./types";
 import { clearShapeCatalog, refreshShapeCatalog } from "@/lib/catalog/store";
 import { refreshShapeRuntime } from "@/lib/runtime/store";
 import { identifyTelemetryUser } from "@/lib/telemetry";
+import { clearLastTurnUsage } from "@/lib/chat/last-turn-usage";
 import {
   USAGE_STALE_MS,
   UsageRefreshScheduler,
@@ -486,6 +487,8 @@ async function applyToken(token: string | null, allowRefresh = true) {
     // a sign-out that started in another Shape window: that one bumps its own
     // counter, and this window only finds out through applyToken(null).
     sessionGeneration += 1;
+    // The last-turn figure belongs to the session that produced it.
+    clearLastTurnUsage();
     clearShapeCatalog();
     saveCachedProfile(null);
     saveRefresh(null);

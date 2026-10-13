@@ -191,6 +191,40 @@ describe("UsageRefreshScheduler", () => {
         expect(scheduler.startedCount).toBe(1);
     });
 
+    it("collapses events arriving during a slow load into one follow-up", async () => {
+        let release: (() => void) | null = null;
+        let started = 0;
+        const load = vi.fn(() => {
+            started += 1;
+            if (started === 1) {
+                return new Promise<void>((resolve) => {
+                    release = resolve;
+                });
+            }
+            return Promise.resolve();
+        });
+        const scheduler = new UsageRefreshScheduler({ load, debounceMs: 10 });
+
+        // Start a load that will not settle for a while. The load begins on the
+        // next microtask because #run chains onto the serialisation promise.
+        const first = scheduler.flush();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(started).toBe(1);
+
+        // A stream of usage events lands while that load is still in flight.
+        for (let i = 0; i < 6; i += 1) {
+            scheduler.schedule();
+            await vi.advanceTimersByTimeAsync(10);
+        }
+
+        release?.();
+        await first;
+        await vi.advanceTimersByTimeAsync(10);
+
+        // One queued follow-up, not one per event.
+        expect(started).toBe(2);
+    });
+
     it("never overlaps loads, so responses cannot land out of order", async () => {
         const events: string[] = [];
         let release: (() => void) | null = null;

@@ -103,7 +103,7 @@ function formatCredits(n: number): string {
 }
 
 /** Age after which the last-turn figure is history, not feedback. */
-const LAST_TURN_TTL_MS = 15 * 60 * 1000;
+export const LAST_TURN_TTL_MS = 15 * 60 * 1000;
 
 /**
  * What the most recent turn cost, for the ring tooltip.
@@ -115,15 +115,23 @@ const LAST_TURN_TTL_MS = 15 * 60 * 1000;
 export function formatLastTurnDelta(
     lastTurn?: LastTurnUsage | null,
     now: number = Date.now(),
+    userId?: string | null,
 ): string | null {
     if (!lastTurn) return null;
     if (!Number.isFinite(lastTurn.at) || now - lastTurn.at > LAST_TURN_TTL_MS) return null;
+    // The record is module-global and outlives a session. A turn that belongs to
+    // a different account is not this user's feedback, so drop it rather than
+    // show the previous user's cost to whoever signed in next.
+    if ((lastTurn.userId ?? null) !== (userId ?? null)) return null;
+    const tokens = lastTurn.tokens ?? 0;
     if (lastTurn.usedAuto) {
-        const tokens = lastTurn.tokens ?? 0;
         return tokens > 0 ? `+${tokens.toLocaleString()} tokens last turn` : null;
     }
     const credits = lastTurn.creditsCharged ?? 0;
-    return credits > 0 ? `+${formatCredits(credits)} credits last turn` : null;
+    if (credits > 0) return `+${formatCredits(credits)} credits last turn`;
+    // A premium turn often reports tokens without a credit charge. The token
+    // count still confirms the turn spent something, so fall back to it.
+    return tokens > 0 ? `+${tokens.toLocaleString()} tokens last turn` : null;
 }
 
 function withDelta(tooltip: string, delta: string | null): string {
@@ -141,6 +149,7 @@ export function resolveChatUsageDisplay(
         | "freeAutoPercent"
         | "creditsIncluded"
         | "creditsRemaining"
+        | "userId"
     >,
     lastTurn?: LastTurnUsage | null,
     now: number = Date.now(),
@@ -165,7 +174,7 @@ export function resolveChatUsageDisplay(
     }
 
     const usingAuto = selectedModel === "auto" || isAutoModelId(selectedModel) || auth.tier === "free";
-    const delta = formatLastTurnDelta(lastTurn, now);
+    const delta = formatLastTurnDelta(lastTurn, now, auth.userId);
 
     if (usingAuto) {
         const percent = Math.max(0, Math.min(100, Math.round(auth.freeAutoPercent ?? 0)));

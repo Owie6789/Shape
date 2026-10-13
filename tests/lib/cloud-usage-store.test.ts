@@ -281,6 +281,44 @@ describe("cloud usage store fast path", () => {
         expect(getShapeAuthState().email).toBeNull();
     });
 
+    it("still applies the account after a 401 forces a token rotation", async () => {
+        await signIn();
+        localStorage.setItem("shape-auth-refresh-token", "refresh-1");
+
+        // First account call 401s, the refresh mints a new token, the retry lands.
+        let accountCalls = 0;
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (input: RequestInfo | URL) => {
+                const url = String(input);
+                if (/\/api\/account(?!\/)/.test(url)) {
+                    accountCalls += 1;
+                    if (accountCalls === 1) return jsonReply({ error: "expired" }, 401);
+                    return jsonReply({ ...ACCOUNT, creditsRemaining: 999 });
+                }
+                if (url.includes("/oauth/token")) {
+                    return jsonReply({
+                        accessToken: "token-2",
+                        refreshToken: "refresh-2",
+                        user: { id: "user-1", email: "dev@example.com", name: "Dev" },
+                        tier: "pro",
+                        credits: 999,
+                    });
+                }
+                return jsonReply({});
+            }),
+        );
+
+        await refreshShapeAuth();
+
+        // If the rotation bumped the session generation and nothing re-captured it,
+        // the retry would be dropped and the balance would stay at the old figure.
+        expect(accountCalls).toBeGreaterThanOrEqual(2);
+        expect(getShapeAuthState().loggedIn).toBe(true);
+        expect(getShapeAuthState().creditsRemaining).toBe(999);
+        expect(getShapeAuthState().accessToken).toBe("token-2");
+    });
+
     it("rebroadcasts a snapshot it produced itself so other windows catch up", async () => {
         await signIn();
         const { seen, restore } = watchUsageBroadcasts();

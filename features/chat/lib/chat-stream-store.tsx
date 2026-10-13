@@ -453,12 +453,19 @@ export function ChatStreamProvider({ children }: { children: React.ReactNode }) 
                     void import("@/lib/cloud/store").then(({ refreshShapeUsage }) => {
                         refreshShapeUsage();
                     });
-                    void import("@/lib/chat/last-turn-usage").then(({ setLastTurnUsage }) => {
+                    void Promise.all([
+                        import("@/lib/chat/last-turn-usage"),
+                        import("@/lib/cloud/store"),
+                    ]).then(([{ setLastTurnUsage }, { getShapeAuthState }]) => {
                         setLastTurnUsage({
                             tokens: stats.tokens ?? ((stats.inputTokens ?? 0) + (stats.outputTokens ?? 0)),
                             inputTokens: stats.inputTokens,
                             creditsCharged: stats.creditsCharged ?? 0,
                             usedAuto: stats.usedAuto,
+                            // Stamp whose turn this was. The record outlives the
+                            // session otherwise, so the next account to sign in
+                            // would be shown this user's cost.
+                            userId: getShapeAuthState().userId,
                         });
                     });
                 }

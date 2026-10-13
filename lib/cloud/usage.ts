@@ -214,6 +214,7 @@ export class UsageRefreshScheduler {
   #chain: Promise<void> = Promise.resolve();
   #timer: ReturnType<typeof setTimeout> | null = null;
   #running = false;
+  #queued = false;
   #started = 0;
   #disposed = false;
 
@@ -267,8 +268,14 @@ export class UsageRefreshScheduler {
 
   #run(): Promise<void> {
     if (this.#disposed) return Promise.resolve();
+    // A load is in flight and another is already waiting behind it. Collapsing
+    // here means a burst of events during a slow request costs one follow-up
+    // refresh instead of one per event.
+    if (this.#running && this.#queued) return this.#chain;
+    this.#queued = true;
     const next = this.#chain.then(async () => {
       if (this.#disposed) return;
+      this.#queued = false;
       this.#started += 1;
       this.#running = true;
       try {

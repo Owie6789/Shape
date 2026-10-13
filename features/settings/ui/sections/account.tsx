@@ -16,7 +16,7 @@ import {
 } from "@/lib/cloud/store";
 import { requestShapeLogin } from "@/features/agent/workbench/ui/login-prompt-dialog";
 import { SHAPE_API_BASE } from "@/lib/cloud/api";
-import { formatUsageFreshness } from "@/lib/cloud/usage";
+import { formatUsageFreshness, isUsageStale } from "@/lib/cloud/usage";
 import { commands } from "@/lib/backend";
 import { cn } from "@/lib/utils";
 
@@ -46,6 +46,8 @@ export function AccountSettingsPanel() {
     const freeAutoPercent = auth.freeAutoPercent ?? 0;
     const now = useNow(30_000);
     const freshness = formatUsageFreshness(auth.usageUpdatedAt, now);
+    // Online but unconfirmed for a while is its own state, distinct from offline.
+    const stale = !auth.offline && isUsageStale(auth.usageUpdatedAt, now);
     const resetLabel = useMemo(() => {
         const iso = auth.currentPeriodEnd;
         const date = iso
@@ -166,11 +168,17 @@ export function AccountSettingsPanel() {
                             <span
                                 className={cn(
                                     "shrink-0 text-xs tabular-nums",
-                                    auth.offline ? "text-warning" : "text-text-muted",
+                                    auth.offline || stale ? "text-warning" : "text-text-muted",
                                 )}
-                                title={auth.offline ? "Last known figures — Shape Cloud is unreachable" : undefined}
+                                title={
+                                    auth.offline
+                                        ? "Last known figures — Shape Cloud is unreachable"
+                                        : stale
+                                          ? "Figures are older than 30s — waiting on the next confirmation"
+                                          : undefined
+                                }
                             >
-                                {auth.offline ? "Offline · " : ""}
+                                {auth.offline ? "Offline · " : stale ? "Stale · " : ""}
                                 {freshness}
                             </span>
                         </div>
