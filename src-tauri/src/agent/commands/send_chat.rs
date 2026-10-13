@@ -53,6 +53,7 @@ pub async fn send_chat_message(
     conversation_kind: Option<String>,
     subagent_models: Option<Vec<String>>,
     subagent_default_model: Option<String>,
+    conversation_id: Option<String>,
     state: tauri::State<'_, AgentState>,
     app_state: tauri::State<'_, AppState>,
     index_state: tauri::State<'_, crate::agent::index::IndexState>,
@@ -73,16 +74,6 @@ pub async fn send_chat_message(
     let selected_auto = model_router::is_auto_selection(&raw_model);
     let model_to_use = model_router::normalize_model(&raw_model);
     let proxy_model = model_router::proxy_model_id(&raw_model);
-    let history_has_images = state
-        .history
-        .lock()
-        .map(|h| {
-            h.iter().any(|m| {
-                m.role == "user" && model_router::content_has_images(&m.content)
-            })
-        })
-        .unwrap_or(false);
-    let has_images = model_router::content_has_images(&message) || history_has_images;
     let mode_to_use = mode.unwrap_or_else(|| "Ask".to_string());
     // Auto stays on DeepSeek locally. The website maps `auto` for billing.
     // Vision-capable picks keep pixels; text-only models get a caption pass.
@@ -193,6 +184,39 @@ pub async fn send_chat_message(
         *state.conversation_kind.lock()? = Some("chat".to_string());
     }
 
+    // A send belongs to exactly one conversation. An explicit id activates that chat (never
+    // whatever the backend happened to hold); `None` starts a brand-new chat.
+    let explicit_target = conversation_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    let owned_conversation_id = match explicit_target {
+        Some(target) => {
+            super::conversation::activate_conversation(
+                &state,
+                &target,
+                current_proj_path.as_deref(),
+                true,
+            )?;
+            target
+        }
+        None => {
+            let bound = state.current_conversation_id.lock()?.is_some();
+            if bound {
+                if let Some(path) = current_proj_path.clone() {
+                    // Save the chat being left under its own id before the reset.
+                    let _ = history::save_current_conversation(&state, &path);
+                }
+            }
+            super::conversation::clear_live_chat(&state)?;
+            let fresh = history::new_conversation_id();
+            *state.current_conversation_id.lock()? = Some(fresh.clone());
+            fresh
+        }
+    };
+    let _ = models;
+
     let stored_user_message = display_message
         .as_deref()
         .map(str::trim)
@@ -224,19 +248,18 @@ pub async fn send_chat_message(
         prev_family.and_then(|prev| model_router::mid_chat_switch_hint(prev, family))
     };
 
-    // Promote draft chats immediately (id + title) so switching away mid-generation
-    // cannot drop the conversation while the backend is still working.
-    let owned_conversation_id = {
-        let mut guard = state.current_conversation_id.lock()?;
-        if guard.is_none() {
-            *guard = Some(format!("{}", now_f64() as u64));
-        }
-        guard.clone().expect("conversation id just ensured")
-    };
-
-    let _ = models;
-
     crate::agent::subagents::set_policy(&state, subagent_models, subagent_default_model);
+
+    let history_has_images = state
+        .history
+        .lock()
+        .map(|h| {
+            h.iter().any(|m| {
+                m.role == "user" && model_router::content_has_images(&m.content)
+            })
+        })
+        .unwrap_or(false);
+    let has_images = model_router::content_has_images(&message) || history_has_images;
 
     let turn_id = uuid::Uuid::new_v4().to_string();
     let conversation_id = Some(owned_conversation_id.clone());
@@ -788,24 +811,14 @@ pub async fn send_chat_message(
             "chat",
             "Turn finished after conversation switch — persisting to original conversation only",
         );
-        if let Some(path) = &current_proj_path {
-            let mut hist = {
-                let convs = state.conversations.lock()?;
-                convs
-                    .get(path)
-                    .and_then(|list| list.iter().find(|c| c.id == owned_conversation_id))
-                    .map(|c| c.history.clone())
-                    .unwrap_or_default()
-            };
-            history::replace_or_push_assistant(&mut hist, assistant_message.clone());
-            let _ = history::upsert_conversation_snapshot(
-                &state,
-                path,
-                &owned_conversation_id,
-                &owned_title,
-                hist,
-            );
-        }
+        let _ = persist_assistant_for_turn(
+            &state,
+            current_proj_path.as_deref(),
+            &owned_conversation_id,
+            &owned_title,
+            assistant_message.clone(),
+            false,
+        );
         // The open chat is still this turn. Send the same details the menu reads,
         // even though live history now belongs to whatever the user switched to.
         let _ = app_handle.emit(
@@ -834,13 +847,14 @@ pub async fn send_chat_message(
         // Cancelled (Stop / Redo / Restore) — keep any streamed tool/UI transcript so
         // Stop does not wipe the assistant message the user was looking at.
         if !final_full_response.trim().is_empty() {
-            {
-                let mut hist = state.history.lock()?;
-                history::replace_or_push_assistant(&mut hist, assistant_message);
-            }
-            if let Some(path) = &current_proj_path {
-                let _ = history::save_current_conversation(&state, path);
-            }
+            let _ = persist_assistant_for_turn(
+                &state,
+                current_proj_path.as_deref(),
+                &owned_conversation_id,
+                &owned_title,
+                assistant_message,
+                still_current,
+            );
         }
         let _ = app_handle.emit(
             "chat_complete",
@@ -878,6 +892,37 @@ pub async fn send_chat_message(
     );
 
     Ok(final_full_response)
+}
+
+/// Store a finished assistant message under its own conversation. A chat that is still the
+/// live one goes through live state. Any other chat is updated on disk only, so a turn that
+/// finishes late can never leak into whichever chat the user is looking at now.
+fn persist_assistant_for_turn(
+    state: &AgentState,
+    project: Option<&str>,
+    conversation_id: &str,
+    title: &str,
+    message: ChatMessage,
+    is_live: bool,
+) -> Result<(), crate::core::error::AppError> {
+    if is_live {
+        {
+            let mut hist = state.history.lock()?;
+            history::replace_or_push_assistant(&mut hist, message);
+        }
+        if let Some(path) = project {
+            let _ = history::save_current_conversation(state, path);
+        }
+        return Ok(());
+    }
+    let Some(path) = project else {
+        return Ok(());
+    };
+    let mut hist = history::find_conversation_by_id(conversation_id, Some(path))
+        .map(|(_, conv)| conv.history)
+        .unwrap_or_default();
+    history::replace_or_push_assistant(&mut hist, message);
+    history::upsert_and_persist_snapshot(state, path, conversation_id, title, hist)
 }
 
 #[tauri::command]

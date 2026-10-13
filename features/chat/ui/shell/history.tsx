@@ -101,13 +101,12 @@ export function ChatHistoryMenu({
                 onSelectConversation(conversation.id, conversation);
                 return;
             }
-            await commands.loadConversation(
-                conversation.id,
-                conversation.project_path ?? projectPath ?? undefined,
+            // The chat view opens it (and activates it in the backend).
+            window.dispatchEvent(
+                new CustomEvent("shape-chat-load", { detail: { id: conversation.id } }),
             );
-            window.dispatchEvent(new CustomEvent("shape-chat-refresh"));
         },
-        [onSelectConversation, projectPath],
+        [onSelectConversation],
     );
 
     const handleDelete = useCallback(async (conversationId: string) => {

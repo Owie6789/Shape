@@ -324,6 +324,7 @@ pub fn run() {
             agent::commands::send_chat::update_turn_policy,
             agent::commands::conversation::get_chat_history,
             agent::commands::conversation::get_chat_generation_state,
+            agent::commands::conversation::get_conversation_messages,
             agent::commands::conversation::clear_chat_history,
             agent::commands::conversation::new_chat,
             agent::commands::conversation::set_chat_incognito,

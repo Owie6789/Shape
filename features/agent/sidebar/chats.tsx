@@ -72,6 +72,7 @@ import {
     type SubagentCard,
 } from "@/features/agent/subagents/store";
 import { listen } from "@tauri-apps/api/event";
+import { useChatStreamOptional } from "@/features/chat/lib/chat-stream-store";
 import { ScrollArea } from "@/components/ui/scroll";
 type ChatSort = "recent" | "oldest" | "name-asc" | "name-desc";
 type ChatFilter = "all" | "pinned" | "unread";
@@ -587,18 +588,12 @@ export function ChatList({
         return () => window.removeEventListener("shape-chat-generating", onGenerating as EventListener);
     }, [activeId]);
 
+    // Highlight the chat on screen. The backend's current chat can be another one while a
+    // background chat runs, so it is not used here.
+    const viewedChatId = useChatStreamOptional().viewedConversationId;
     useEffect(() => {
-        let cancelled = false;
-        void commands
-            .getCurrentConversationId()
-            .then((id) => {
-                if (!cancelled && id) setActiveId(id);
-            })
-            .catch(() => {});
-        return () => {
-            cancelled = true;
-        };
-    }, [project_path]);
+        setActiveId(viewedChatId);
+    }, [viewedChatId]);
 
     const visible = useMemo(() => {
         const live = chats.filter((c) => !c.archived);

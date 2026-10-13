@@ -84,32 +84,40 @@ export function setActiveRepoPath(repoPath: string, workspaceRoot?: string | nul
     sessionStorage.setItem("shape-active-git-repo", normalized);
 }
 
+type RepoState = {
+    /** Normalized workspace root these repos were discovered for. */
+    root: string | null;
+    repos: GitRepoInfo[];
+    activePath: string | null;
+    loading: boolean;
+};
+
+/** Initial state for a root: the module cache when it already holds this root, else loading. */
+function stateForRoot(rootNorm: string | null, workspaceRoot: string | null): RepoState {
+    const cacheHit = rootNorm != null && cachedWorkspace === rootNorm && cachedRepos.length > 0;
+    return {
+        root: rootNorm,
+        repos: cacheHit ? cachedRepos : [],
+        activePath: cacheHit && workspaceRoot ? pickDefaultRepo(workspaceRoot, cachedRepos) : null,
+        loading: !cacheHit && !!rootNorm,
+    };
+}
+
 export function useGitRepos(workspaceRoot: string | null) {
     const rootNorm = workspaceRoot ? normalize(workspaceRoot) : null;
-    const cacheHit =
-        rootNorm != null &&
-        cachedWorkspace === rootNorm &&
-        cachedRepos.length > 0;
-
-    const [repos, setRepos] = useState<GitRepoInfo[]>(() =>
-        cacheHit ? cachedRepos : [],
-    );
-    const [activeRepoPath, setActiveRepoPathState] = useState<string | null>(() =>
-        cacheHit && workspaceRoot
-            ? pickDefaultRepo(workspaceRoot, cachedRepos)
-            : null,
-    );
-    const [loading, setLoading] = useState(() => !cacheHit && !!workspaceRoot);
+    const [state, setRepoState] = useState<RepoState>(() => stateForRoot(rootNorm, workspaceRoot));
     const generationRef = useRef(0);
+
+    // State tagged with another root is never shown, even for the first render after a
+    // project switch: it reads as the new root's initial state instead.
+    const current = state.root === rootNorm ? state : stateForRoot(rootNorm, workspaceRoot);
 
     const rescan = useCallback(async (force = false) => {
         const gen = ++generationRef.current;
 
         if (!workspaceRoot) {
             if (gen === generationRef.current) {
-                setRepos([]);
-                setActiveRepoPathState(null);
-                setLoading(false);
+                setRepoState({ root: null, repos: [], activePath: null, loading: false });
             }
             return;
         }
@@ -117,22 +125,23 @@ export function useGitRepos(workspaceRoot: string | null) {
         const rootAtStart = normalize(workspaceRoot);
 
         // Reuse module cache — avoids the ~1s "no repo" flash when Source remounts.
-        if (
-            !force &&
-            cachedWorkspace === rootAtStart &&
-            cachedRepos.length > 0
-        ) {
+        if (!force && cachedWorkspace === rootAtStart && cachedRepos.length > 0) {
             if (gen === generationRef.current) {
-                setRepos(cachedRepos);
                 const defaultRepo = pickDefaultRepo(workspaceRoot, cachedRepos);
-                setActiveRepoPathState(defaultRepo);
                 if (defaultRepo) setActiveRepoPath(defaultRepo, workspaceRoot);
-                setLoading(false);
+                setRepoState({ root: rootAtStart, repos: cachedRepos, activePath: defaultRepo, loading: false });
             }
             return;
         }
 
-        setLoading(true);
+        // A force refresh keeps the current repos on screen; another root never inherits them.
+        if (gen === generationRef.current) {
+            setRepoState((prev) =>
+                prev.root === rootAtStart
+                    ? { ...prev, loading: true }
+                    : { root: rootAtStart, repos: [], activePath: null, loading: true },
+            );
+        }
         try {
             if (force) invalidateGitRepoCache();
             const discovered = await discoverGitRepos(workspaceRoot);
@@ -140,22 +149,19 @@ export function useGitRepos(workspaceRoot: string | null) {
             if (gen !== generationRef.current) return;
             if (normalize(workspaceRoot) !== rootAtStart) return;
 
-            setRepos(discovered);
             const defaultRepo = pickDefaultRepo(workspaceRoot, discovered);
-            setActiveRepoPathState(defaultRepo);
             if (defaultRepo) setActiveRepoPath(defaultRepo, workspaceRoot);
+            setRepoState({ root: rootAtStart, repos: discovered, activePath: defaultRepo, loading: false });
         } catch {
             if (gen !== generationRef.current) return;
-            setRepos([]);
-            setActiveRepoPathState(null);
-        } finally {
-            if (gen === generationRef.current) {
-                setLoading(false);
-            }
+            setRepoState({ root: rootAtStart, repos: [], activePath: null, loading: false });
         }
     }, [workspaceRoot]);
 
     useEffect(() => {
+        // Root changes are already reflected by the derived `current` above, so this sync
+        // update is at most one extra render. It is the scan's own state write.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         void rescan(false);
         return () => {
             // Invalidate in-flight work when workspace changes or unmounts.
@@ -173,23 +179,23 @@ export function useGitRepos(workspaceRoot: string | null) {
 
     const setActiveRepo = useCallback(
         (path: string) => {
-            setActiveRepoPathState(path);
+            setRepoState((prev) => (prev.root === rootNorm ? { ...prev, activePath: path } : prev));
             setActiveRepoPath(path, workspaceRoot);
         },
-        [workspaceRoot],
+        [workspaceRoot, rootNorm],
     );
 
     /** Repo path for SCM operations — only when a repo was discovered or selected. */
-    const scmRepoPath = activeRepoPath ?? (repos.length === 1 ? repos[0].path : null);
+    const scmRepoPath = current.activePath ?? (current.repos.length === 1 ? current.repos[0].path : null);
 
     return {
-        repos,
-        activeRepoPath,
+        repos: current.repos,
+        activeRepoPath: current.activePath,
         scmRepoPath,
-        loading,
+        loading: current.loading,
         rescan,
         setActiveRepo,
-        hasMultipleRepos: repos.length > 1,
+        hasMultipleRepos: current.repos.length > 1,
     };
 }
 

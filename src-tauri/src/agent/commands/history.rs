@@ -174,6 +174,12 @@ pub fn find_conversation_by_id(id: &str, preferred_proj: Option<&str>) -> Option
     None
 }
 
+/// Id for a brand-new chat. Second-resolution timestamps let two chats created in the
+/// same second share one id, which merged unrelated conversations together.
+pub fn new_conversation_id() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
 pub fn save_current_conversation(state: &AgentState, proj_path: &str) -> Result<(), AppError> {
     save_current_conversation_inner(state, proj_path, true)
 }
@@ -209,9 +215,7 @@ fn save_current_conversation_inner(
     let title = title.unwrap_or_else(|| "Untitled".to_string());
 
     let mut conv_id_guard = state.current_conversation_id.lock()?;
-    let id = conv_id_guard
-        .clone()
-        .unwrap_or_else(|| format!("{}", now_f64() as u64));
+    let id = conv_id_guard.clone().unwrap_or_else(new_conversation_id);
     *conv_id_guard = Some(id.clone());
 
     let mut convs = state.conversations.lock()?;
@@ -263,6 +267,23 @@ fn save_current_conversation_inner(
     }
     logging::debug("history", "Current conversation saved");
 
+    Ok(())
+}
+
+/// Update a chat that is not the live one, then write the project's chat file. The
+/// in-memory snapshot alone was lost on restart until some unrelated save happened.
+pub fn upsert_and_persist_snapshot(
+    state: &AgentState,
+    proj_path: &str,
+    id: &str,
+    title: &str,
+    history: Vec<ChatMessage>,
+) -> Result<(), AppError> {
+    upsert_conversation_snapshot(state, proj_path, id, title, history)?;
+    let convs = state.conversations.lock()?;
+    if let Some(list) = convs.get(proj_path) {
+        save_conversations(proj_path, list);
+    }
     Ok(())
 }
 

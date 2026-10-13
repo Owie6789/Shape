@@ -203,7 +203,16 @@ function GitEmbedNavChrome() {
     );
 }
 
+/**
+ * Keyed by project: a project switch remounts the gate, so its empty reason, checking flag,
+ * refresh token and repo state never carry over from the previous project.
+ */
 function GitManagerGate() {
+    const { project_path } = useProjectState();
+    return <GitManagerGateInner key={project_path ?? ""} />;
+}
+
+function GitManagerGateInner() {
     const { project_path } = useProjectState();
     const { repos, activeRepoPath, loading } = useGitRepos(project_path);
     const { navPortalTarget } = useContext(GitEmbedCtx);

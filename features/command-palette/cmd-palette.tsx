@@ -96,17 +96,13 @@ function projectNameFromPath(path?: string | null): string {
     return path.replace(/\\/g, "/").split("/").filter(Boolean).pop() || "";
 }
 
-function openAgentConversation(id: string, projectPath?: string | null) {
+function openAgentConversation(id: string) {
     window.dispatchEvent(
         new CustomEvent("shape-layout-toggle", {
             detail: { id: "secondary-sidebar", value: true },
         }),
     );
-    void import("@/lib/backend").then(({ commands }) => {
-        void commands.loadConversation(id, projectPath ?? undefined).then(() => {
-            window.dispatchEvent(new CustomEvent("shape-chat-refresh"));
-        });
-    });
+    window.dispatchEvent(new CustomEvent("shape-chat-load", { detail: { id } }));
 }
 
 function getSettingsPaletteActions(): EditorAction[] {
@@ -305,7 +301,7 @@ export function CommandPalette() {
                                 window.dispatchEvent(new CustomEvent("shape-chat-refresh"));
                             });
                         },
-                        run: () => openAgentConversation(conv.id, conv.project_path),
+                        run: () => openAgentConversation(conv.id),
                         delete: (e: React.MouseEvent) => {
                             e.stopPropagation();
                             e.preventDefault();
@@ -330,7 +326,7 @@ export function CommandPalette() {
                             model: child.model || "auto",
                             reply: true,
                             run: () => {
-                                openAgentConversation(conv.id, conv.project_path);
+                                openAgentConversation(conv.id);
                                 window.setTimeout(() => {
                                     window.dispatchEvent(
                                         new CustomEvent("shape-open-subagent", {

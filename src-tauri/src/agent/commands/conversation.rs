@@ -57,9 +57,30 @@ pub fn get_chat_history(
 
 #[tauri::command]
 pub fn get_chat_generation_state(
+    conversation_id: Option<String>,
     state: tauri::State<'_, AgentState>,
 ) -> Result<crate::agent::models::ChatGenerationState, AppError> {
-    Ok(state.generation_state())
+    Ok(state.generation_state_for(conversation_id.as_deref()))
+}
+
+/// Messages for ONE conversation, by id. Works whether or not it is the live chat, so the
+/// UI never has to infer what it is showing from the backend's current pointer.
+#[tauri::command]
+pub fn get_conversation_messages(
+    id: String,
+    state: tauri::State<'_, AgentState>,
+    app_state: tauri::State<'_, AppState>,
+) -> Result<Vec<ChatMessage>, AppError> {
+    let is_live = state.current_conversation_id.lock()?.as_deref() == Some(id.as_str());
+    if is_live {
+        let live = state.history.lock()?.clone();
+        return Ok(state.merge_in_flight_into_history(live));
+    }
+    let preferred = app_state.0.lock()?.project_path.clone();
+    let stored = history::find_conversation_by_id(&id, preferred.as_deref())
+        .map(|(_, conv)| conv.history)
+        .unwrap_or_default();
+    Ok(state.merge_in_flight_into_history_for(stored, Some(id.as_str())))
 }
 
 #[tauri::command]
@@ -108,14 +129,7 @@ pub fn get_conversations(
 
 #[tauri::command]
 pub fn clear_chat_history(state: tauri::State<'_, AgentState>) -> Result<(), AppError> {
-    state.history.lock()?.clear();
-    state.title.lock()?.take();
-    state.reset_title_meta();
-    *state.history_summary.lock()? = None;
-    *state.current_conversation_id.lock()? = None;
-    state.clear_design_preview_state();
-    state.clear_file_checkpoints();
-    Ok(())
+    clear_live_chat(&state)
 }
 
 /// Restore both chat history and any file edits made from `index` onward. This is
@@ -232,14 +246,7 @@ pub fn new_chat(
         }
     }
 
-    state.history.lock()?.clear();
-    state.title.lock()?.take();
-    state.reset_title_meta();
-    *state.history_summary.lock()? = None;
-    *state.current_conversation_id.lock()? = None;
-    *state.conversation_kind.lock()? = None;
-    state.clear_design_preview_state();
-    state.clear_file_checkpoints();
+    clear_live_chat(&state)?;
     state.set_incognito(false);
 
     // Refresh the index only when it is actually stale — an unconditional
@@ -260,46 +267,86 @@ pub fn load_conversation(
     state: tauri::State<'_, AgentState>,
     app_state: tauri::State<'_, AppState>,
 ) -> Result<(), AppError> {
-    if let Some(active_path) = state.current_project.lock()?.as_ref() {
-        let _ = history::save_current_conversation(&state, active_path);
-    }
-
     let preferred_proj = project_path
         .or_else(|| app_state.0.lock().ok().and_then(|s| s.project_path.clone()))
         .filter(|p| !p.is_empty());
+    activate_conversation(&state, &id, preferred_proj.as_deref(), false)
+}
 
-    let (load_proj, conv) = history::find_conversation_by_id(
-        &id,
-        preferred_proj.as_deref(),
-    )
-    .ok_or(AppError::Message("Conversation not found".to_string()))?;
+/// Clear the live chat: history, title, checkpoints and the current id. Does not save;
+/// callers that leave a bound chat save it first.
+pub fn clear_live_chat(state: &AgentState) -> Result<(), AppError> {
+    state.history.lock()?.clear();
+    state.title.lock()?.take();
+    state.reset_title_meta();
+    *state.history_summary.lock()? = None;
+    *state.current_conversation_id.lock()? = None;
+    *state.conversation_kind.lock()? = None;
+    state.clear_design_preview_state();
+    state.clear_file_checkpoints();
+    Ok(())
+}
 
-    {
-        let mut convs = state.conversations.lock()?;
-        if !convs.contains_key(&load_proj) {
-            convs.insert(load_proj.clone(), history::load_conversations(&load_proj));
+/// Make `id` the live chat. The chat being left is saved under its own id first, and
+/// nothing here mints a new id. With `allow_missing`, an unknown id becomes an empty chat
+/// carrying that id (used when a send names a chat that is not on disk yet).
+pub fn activate_conversation(
+    state: &AgentState,
+    id: &str,
+    preferred_proj: Option<&str>,
+    allow_missing: bool,
+) -> Result<(), AppError> {
+    if state.current_conversation_id.lock()?.as_deref() == Some(id) {
+        return Ok(());
+    }
+    let leaving_bound_chat = state.current_conversation_id.lock()?.is_some();
+    if leaving_bound_chat {
+        let active_path = state.current_project.lock()?.clone();
+        if let Some(active_path) = active_path {
+            let _ = history::save_current_conversation(state, &active_path);
         }
     }
 
-    *state.current_project.lock()? = Some(load_proj);
-    let mut history = conv.history;
-    history::collapse_duplicate_assistants(&mut history);
-    let user_turns = history.iter().filter(|m| m.role == "user").count() as u32;
-    *state.history.lock()? = history;
-    *state.title.lock()? = Some(conv.title);
-    let anchor = if conv.title_anchor_turns == 0 {
-        user_turns
-    } else {
-        conv.title_anchor_turns
-    };
-    state.set_title_meta(conv.title_locked, anchor);
-    *state.current_conversation_id.lock()? = Some(id.clone());
-    *state.conversation_kind.lock()? = Some("chat".to_string());
-    state.clear_design_preview_state();
-    state.replace_file_checkpoints(checkpoints::load_checkpoints(&id));
-    state.set_incognito(false);
-
-    Ok(())
+    match history::find_conversation_by_id(id, preferred_proj) {
+        Some((load_proj, conv)) => {
+            {
+                let mut convs = state.conversations.lock()?;
+                if !convs.contains_key(&load_proj) {
+                    convs.insert(load_proj.clone(), history::load_conversations(&load_proj));
+                }
+            }
+            *state.current_project.lock()? = Some(load_proj);
+            let mut loaded = conv.history;
+            history::collapse_duplicate_assistants(&mut loaded);
+            let user_turns = loaded.iter().filter(|m| m.role == "user").count() as u32;
+            *state.history.lock()? = loaded;
+            *state.title.lock()? = Some(conv.title);
+            let anchor = if conv.title_anchor_turns == 0 {
+                user_turns
+            } else {
+                conv.title_anchor_turns
+            };
+            state.set_title_meta(conv.title_locked, anchor);
+            *state.current_conversation_id.lock()? = Some(id.to_string());
+            *state.conversation_kind.lock()? = Some("chat".to_string());
+            state.clear_design_preview_state();
+            state.replace_file_checkpoints(checkpoints::load_checkpoints(id));
+            state.set_incognito(false);
+            Ok(())
+        }
+        None if allow_missing => {
+            if let Some(path) = preferred_proj.filter(|p| !p.is_empty()) {
+                *state.current_project.lock()? = Some(path.to_string());
+            }
+            clear_live_chat(state)?;
+            *state.current_conversation_id.lock()? = Some(id.to_string());
+            *state.conversation_kind.lock()? = Some("chat".to_string());
+            state.replace_file_checkpoints(checkpoints::load_checkpoints(id));
+            state.set_incognito(false);
+            Ok(())
+        }
+        None => Err(AppError::Message("Conversation not found".to_string())),
+    }
 }
 
 #[tauri::command]

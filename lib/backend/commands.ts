@@ -521,6 +521,11 @@ export const commands = {
         /** Models subagents may use (user settings). Never inherit the parent chat model. */
         subagentModels?: string[],
         subagentDefaultModel?: string,
+        /**
+         * The conversation this message belongs to. Always pass the chat on screen; `null`
+         * starts a new chat. The backend never guesses from its own current pointer.
+         */
+        conversationId?: string | null,
     ) =>
         invokeCommand<string>("send_chat_message", {
             message,
@@ -544,6 +549,7 @@ export const commands = {
             conversationKind: conversationKind ?? null,
             subagentModels: subagentModels ?? null,
             subagentDefaultModel: subagentDefaultModel ?? null,
+            conversationId: conversationId ?? null,
         }),
     captureHtmlPreview: (options: {
         html: string;
@@ -665,10 +671,17 @@ export const commands = {
         invokeCommand<{ changed: boolean; file: string | null; content: string | null }>(
             "redo_design_source_patch",
         ),
-    stopChatMessage: () => invokeCommand<void>("stop_chat_message"),
+    /** Stops one conversation's turn. Without an id it stops the chat that is live. */
+    stopChatMessage: (conversationId?: string | null) =>
+        invokeCommand<void>("stop_chat_message", { conversationId: conversationId ?? null }),
     getChatHistory: () => invokeCommand<ChatMessage[]>("get_chat_history"),
-    getChatGenerationState: () =>
-        invokeCommand<ChatGenerationState>("get_chat_generation_state"),
+    getChatGenerationState: (conversationId?: string | null) =>
+        invokeCommand<ChatGenerationState>("get_chat_generation_state", {
+            conversationId: conversationId ?? null,
+        }),
+    /** Messages of any one conversation by id (in-flight text included). */
+    getConversationMessages: (id: string) =>
+        invokeCommand<ChatMessage[]>("get_conversation_messages", { id }),
     getChatTitle: () => invokeCommand<string>("get_chat_title"),
     getCurrentConversationId: () => invokeCommand<string | null>("get_current_conversation_id"),
     getConversations: (projectPath?: string) => invokeCommand<Conversation[]>("get_conversations", { projectPath: projectPath ?? null }),

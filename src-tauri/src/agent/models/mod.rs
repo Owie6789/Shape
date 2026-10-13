@@ -637,6 +637,50 @@ impl AgentState {
         history
     }
 
+    /// In-flight turn for one specific conversation (not whichever chat is live).
+    pub fn in_flight_for(&self, conversation_id: &str) -> Option<InFlightTurn> {
+        self.in_flight
+            .lock()
+            .ok()
+            .and_then(|g| g.get(conversation_id).cloned())
+    }
+
+    /// True while `conversation_id` has a turn running, regardless of what is on screen.
+    pub fn is_generating_conversation(&self, conversation_id: &str) -> bool {
+        self.in_flight_for(conversation_id).is_some()
+    }
+
+    /// Release one conversation's in-flight slot (Stop on a background chat).
+    pub fn clear_in_flight_for(&self, conversation_id: &str) {
+        if let Ok(mut guard) = self.in_flight.lock() {
+            guard.remove(conversation_id);
+        }
+    }
+
+    /// Generation state for `conversation_id`, or for the live chat when `None`.
+    pub fn generation_state_for(&self, conversation_id: Option<&str>) -> ChatGenerationState {
+        let snapshot = match conversation_id {
+            Some(id) => self.in_flight_for(id),
+            None => self.in_flight_snapshot(),
+        };
+        match snapshot {
+            Some(f) => ChatGenerationState {
+                is_generating: true,
+                turn_id: Some(f.turn_id),
+                conversation_id: f.conversation_id,
+                partial_content: Some(f.partial_content),
+                activity_label: f.activity_label,
+            },
+            None => ChatGenerationState {
+                is_generating: false,
+                turn_id: None,
+                conversation_id: None,
+                partial_content: None,
+                activity_label: None,
+            },
+        }
+    }
+
     pub fn generation_state(&self) -> ChatGenerationState {
         match self.in_flight_snapshot() {
             Some(f) => ChatGenerationState {

@@ -8,6 +8,7 @@ import { setChatGenerating } from "./generating-chats";
 import { isDemoChatPinned } from "./demo-chat";
 import { NEW_CHAT_TAB_ID } from "../ui/shell/tabs";
 import { upsertTaggedBlockInContent } from "./upsert-stream-blocks";
+
 function isForeignConversation(id?: string | null) {
     return Boolean(id && id.startsWith("mw-worker-"));
 }
@@ -52,8 +53,11 @@ export type ChatStreamState = {
     sendError: string | null;
     /** Older turns were folded into a model-facing summary (Cursor-style). */
     contextSummarized: boolean;
+    /** The conversation on screen. `null` is the draft (New Chat). */
+    viewedConversationId: string | null;
 };
 
+/** A turn the frontend is tracking, keyed by conversation id (or the draft key). */
 type LiveTurn = {
     conversationId: string | null;
     turnId: string | null;
@@ -66,16 +70,31 @@ type ChatStreamContextValue = ChatStreamState & {
     setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
     setSendError: React.Dispatch<React.SetStateAction<string | null>>;
     setContextSummarized: React.Dispatch<React.SetStateAction<boolean>>;
-    syncFromBackend: () => Promise<void>;
-    appendUserOptimistic: (userMsg: string) => void;
-    /** Keep the generating chat mounted in the background when the view changes. */
-    setViewingConversation: (id: string | null) => void;
-    /** Restore the in-flight chat without reloading from disk. */
-    resumeLiveConversation: (id: string | null) => boolean;
+    /** Synchronous read of the conversation on screen (no render lag). */
+    getViewedConversationId: () => string | null;
+    /** Conversation id of the draft's turn once it has started (for Stop from the draft). */
+    getDraftConversationId: () => string | null;
+    /**
+     * Put `id` on screen right now (`null` = draft). Returns a view token; a later load is
+     * applied only while its token is still current.
+     */
+    showConversation: (id: string | null, cached?: ChatMessage[]) => number;
+    /** True while `seq` is still the view the user asked for. */
+    isCurrentView: (seq: number) => boolean;
+    /** Load the transcript of the conversation on screen. Returns it, or null if superseded. */
+    reloadViewedMessages: (seq?: number) => Promise<ChatMessage[] | null>;
+    /** Adopt the backend's current chat on first mount, unless the user already chose one. */
+    bootstrapFromBackend: () => Promise<void>;
+    /** Called when a draft's turn is bound to its real conversation id. */
+    setDraftAdopter: (fn: ((conversationId: string) => void) | null) => void;
+    /** Show the user's message in the chat it was sent to (not necessarily the one on screen). */
+    appendUserOptimistic: (userMsg: string, conversationId: string | null) => void;
     /** Instantly drop the live-turn spinner so Stop does not wait on the stream. */
     stopLiveTurn: () => void;
     /** Leave a running turn in the background and show an empty draft. */
     startDraftChat: () => void;
+    /** True while chat `id` (`null` = the draft) has a turn the frontend is tracking. */
+    hasLiveTurn: (id: string | null) => boolean;
 };
 
 const defaultState: ChatStreamState = {
@@ -86,9 +105,12 @@ const defaultState: ChatStreamState = {
     turnId: null,
     sendError: null,
     contextSummarized: false,
+    viewedConversationId: null,
 };
 
 const ChatStreamContext = React.createContext<ChatStreamContextValue | null>(null);
+
+const PENDING_KEY = "__pending__";
 
 function appendAssistantChunk(prev: ChatMessage[], chunk: string): ChatMessage[] {
     const latest = prev[prev.length - 1];
@@ -142,12 +164,24 @@ export function ChatStreamProvider({ children }: { children: React.ReactNode }) 
     const [turnId, setTurnId] = React.useState<string | null>(null);
     const [sendError, setSendError] = React.useState<string | null>(null);
     const [contextSummarized, setContextSummarized] = React.useState(false);
+    const [viewedConversationId, setViewedConversationIdState] = React.useState<string | null>(null);
+
+    // The conversation on screen is decided only by user intent (open, switch, New Chat,
+    // the first turn of a draft). It is never copied from the backend's current pointer,
+    // which can name a different chat than the one the user is looking at.
     const viewingIdRef = React.useRef<string | null>(null);
+    // Set once the user (or a restored tab) picks a view. Bootstrap must not override it.
+    const viewChosenRef = React.useRef(false);
+    // Bumped on every view change, so a slow load for an earlier view is discarded.
+    const viewSeqRef = React.useRef(0);
     const liveTurnsRef = React.useRef<Map<string, LiveTurn>>(new Map());
+    // Last known transcript per conversation, so a switch paints before the load lands.
+    const transcriptCacheRef = React.useRef<Map<string, ChatMessage[]>>(new Map());
+    const draftConversationIdRef = React.useRef<string | null>(null);
+    const draftAdopterRef = React.useRef<((conversationId: string) => void) | null>(null);
     const messagesRef = React.useRef<ChatMessage[]>(messages);
     const turnIdRef = React.useRef<string | null>(null);
     const ignoredIdsRef = React.useRef<Set<string>>(new Set());
-    const PENDING_KEY = "__pending__";
 
     React.useEffect(() => {
         messagesRef.current = messages;
@@ -157,10 +191,9 @@ export function ChatStreamProvider({ children }: { children: React.ReactNode }) 
         turnIdRef.current = turnId;
     }, [turnId]);
 
-    const liveForView = React.useCallback(() => {
-        const id = viewingIdRef.current;
-        if (id) return liveTurnsRef.current.get(id) ?? null;
-        return liveTurnsRef.current.get(PENDING_KEY) ?? null;
+    const setViewed = React.useCallback((id: string | null) => {
+        viewingIdRef.current = id;
+        setViewedConversationIdState(id);
     }, []);
 
     const applyLive = React.useCallback((live: LiveTurn) => {
@@ -172,80 +205,91 @@ export function ChatStreamProvider({ children }: { children: React.ReactNode }) 
         setTurnPhase(live.turnPhase);
     }, []);
 
-    const setViewingConversation = React.useCallback((id: string | null) => {
-        viewingIdRef.current = id;
-        const live = id
-            ? liveTurnsRef.current.get(id) ?? null
-            : liveTurnsRef.current.get(PENDING_KEY) ?? null;
-        if (live) {
-            applyLive(live);
-            return;
-        }
+    const applyIdle = React.useCallback((transcript: ChatMessage[]) => {
         turnIdRef.current = null;
+        setMessages(transcript);
         setIsLoading(false);
         setTurnId(null);
         setActivityLabel(null);
         setTurnPhase("idle");
-    }, [applyLive]);
-
-    const resumeLiveConversation = React.useCallback((id: string | null) => {
-        if (!id) return false;
-        const live = liveTurnsRef.current.get(id);
-        if (!live) return false;
-        viewingIdRef.current = id;
-        applyLive(live);
-        return true;
-    }, [applyLive]);
-
-    const syncFromBackend = React.useCallback(async () => {
-        if (isDemoChatPinned()) return;
-        try {
-            const [history, gen, convId] = await Promise.all([
-                commands.getChatHistory(),
-                commands.getChatGenerationState(),
-                commands.getCurrentConversationId().catch(() => null),
-            ]);
-            if (isDemoChatPinned()) return;
-            viewingIdRef.current = convId ?? null;
-
-            if (gen.isGenerating && gen.conversationId && !ignoredIdsRef.current.has(gen.conversationId)) {
-                const liveId = gen.conversationId;
-                const existing = liveTurnsRef.current.get(liveId);
-                liveTurnsRef.current.set(liveId, {
-                    conversationId: liveId,
-                    turnId: gen.turnId ?? existing?.turnId ?? null,
-                    messages: viewingIdRef.current === liveId ? history : (existing?.messages ?? history),
-                    activityLabel: gen.activityLabel ?? existing?.activityLabel ?? "Thinking",
-                    turnPhase: existing?.turnPhase ?? "thinking",
-                });
-            }
-
-            const shown = liveForView();
-            if (shown) {
-                applyLive(shown);
-                return;
-            }
-
-            setMessages(history);
-            setIsLoading(false);
-            turnIdRef.current = null;
-            setTurnId(null);
-            setActivityLabel(null);
-            setTurnPhase("idle");
-        } catch (err) {
-            console.error("Failed to sync chat stream:", err);
-        }
-    }, [applyLive, liveForView]);
-
-    const startDraftChat = React.useCallback(() => {
-        viewingIdRef.current = "__draft__";
-        turnIdRef.current = null;
-        setIsLoading(false);
-        setMessages([]);
-        setActivityLabel(null);
-        setTurnPhase("idle");
-        setTurnId(null);
     }, []);
+
+    const showViewInternal = React.useCallback(
+        (id: string | null, cached?: ChatMessage[]): number => {
+            // Keep the transcript on screen for the chat being left, so coming back is instant.
+            if (viewingIdRef.current) {
+                transcriptCacheRef.current.set(viewingIdRef.current, messagesRef.current);
+            }
+            const seq = ++viewSeqRef.current;
+            setViewed(id);
+            const live = liveTurnsRef.current.get(id ?? PENDING_KEY);
+            if (live) {
+                applyLive(live);
+            } else {
+                const transcript = id ? (cached ?? transcriptCacheRef.current.get(id) ?? []) : [];
+                applyIdle(transcript);
+            }
+            return seq;
+        },
+        [applyIdle, applyLive, setViewed],
+    );
+
+    const showConversation = React.useCallback(
+        (id: string | null, cached?: ChatMessage[]): number => {
+            viewChosenRef.current = true;
+            return showViewInternal(id, cached);
+        },
+        [showViewInternal],
+    );
+
+    const isCurrentView = React.useCallback((seq: number) => viewSeqRef.current === seq, []);
+
+    const reloadViewedMessages = React.useCallback(
+        async (seq?: number): Promise<ChatMessage[] | null> => {
+            const id = viewingIdRef.current;
+            if (!id || isDemoChatPinned()) return null;
+            const mySeq = seq ?? viewSeqRef.current;
+            try {
+                const [history, gen] = await Promise.all([
+                    commands.getConversationMessages(id),
+                    commands.getChatGenerationState(id),
+                ]);
+                if (!isCurrentView(mySeq) || viewingIdRef.current !== id) return null;
+                // A turn running in this chat (for example after a window reload) becomes live here.
+                if (
+                    gen.isGenerating
+                    && gen.conversationId === id
+                    && !liveTurnsRef.current.has(id)
+                    && !ignoredIdsRef.current.has(id)
+                ) {
+                    liveTurnsRef.current.set(id, {
+                        conversationId: id,
+                        turnId: gen.turnId ?? null,
+                        messages: history,
+                        activityLabel: gen.activityLabel ?? "Thinking",
+                        turnPhase: "thinking",
+                    });
+                }
+                transcriptCacheRef.current.set(id, history);
+                const live = liveTurnsRef.current.get(id);
+                if (live) applyLive(live);
+                else applyIdle(history);
+                return history;
+            } catch (err) {
+                console.error("Failed to load chat messages:", err);
+                return null;
+            }
+        },
+        [applyIdle, applyLive, isCurrentView],
+    );
+
+    const bootstrapFromBackend = React.useCallback(async () => {
+        if (viewChosenRef.current) return;
+        const cid = await commands.getCurrentConversationId().catch(() => null);
+        if (viewChosenRef.current || isDemoChatPinned()) return;
+        const seq = showViewInternal(cid);
+        await reloadViewedMessages(seq);
+    }, [reloadViewedMessages, showViewInternal]);
 
     const stopLiveTurn = React.useCallback(() => {
         const id = viewingIdRef.current;
@@ -262,27 +306,49 @@ export function ChatStreamProvider({ children }: { children: React.ReactNode }) 
         setTurnId(null);
     }, []);
 
-    const appendUserOptimistic = React.useCallback((userMsg: string) => {
-        const optimisticTs = Date.now() / 1000;
-        const next = [
-            ...messagesRef.current,
-            { role: "user" as const, content: userMsg, timestamp: optimisticTs },
-            { role: "assistant" as const, content: "", timestamp: optimisticTs + 0.001 },
-        ];
-        const key = viewingIdRef.current || PENDING_KEY;
-        ignoredIdsRef.current.delete(key);
-        liveTurnsRef.current.set(key, {
-            conversationId: viewingIdRef.current,
-            turnId: null,
-            messages: next,
-            activityLabel: "Thinking",
-            turnPhase: "thinking",
-        });
-        setMessages(next);
-        setIsLoading(true);
-        setTurnPhase("thinking");
-        setActivityLabel("Thinking");
+    const appendUserOptimistic = React.useCallback(
+        (userMsg: string, conversationId: string | null) => {
+            const optimisticTs = Date.now() / 1000;
+            const onScreen = viewingIdRef.current === conversationId;
+            const key = conversationId ?? PENDING_KEY;
+            const base =
+                liveTurnsRef.current.get(key)?.messages
+                ?? (onScreen
+                    ? messagesRef.current
+                    : conversationId
+                      ? transcriptCacheRef.current.get(conversationId)
+                      : undefined)
+                ?? [];
+            const next = [
+                ...base,
+                { role: "user" as const, content: userMsg, timestamp: optimisticTs },
+                { role: "assistant" as const, content: "", timestamp: optimisticTs + 0.001 },
+            ];
+            if (conversationId) ignoredIdsRef.current.delete(conversationId);
+            liveTurnsRef.current.set(key, {
+                conversationId,
+                turnId: null,
+                messages: next,
+                activityLabel: "Thinking",
+                turnPhase: "thinking",
+            });
+            if (onScreen) {
+                setMessages(next);
+                setIsLoading(true);
+                setTurnPhase("thinking");
+                setActivityLabel("Thinking");
+            }
+        },
+        [],
+    );
+
+    const setDraftAdopter = React.useCallback((fn: ((conversationId: string) => void) | null) => {
+        draftAdopterRef.current = fn;
     }, []);
+
+    const startDraftChat = React.useCallback(() => {
+        showConversation(null);
+    }, [showConversation]);
 
     React.useEffect(() => {
         let disposed = false;
@@ -295,6 +361,12 @@ export function ChatStreamProvider({ children }: { children: React.ReactNode }) 
         };
 
         const finishedTurns = new Set<string>();
+
+        /** The draft's turn now has a real conversation id: bind it (and the draft queue). */
+        const bindDraft = (conversationId: string) => {
+            draftConversationIdRef.current = conversationId;
+            draftAdopterRef.current?.(conversationId);
+        };
 
         const resolveLiveKey = (conversationId?: string | null) => {
             if (conversationId && liveTurnsRef.current.has(conversationId)) return conversationId;
@@ -343,8 +415,17 @@ export function ChatStreamProvider({ children }: { children: React.ReactNode }) 
                     ignoredIdsRef.current.delete(convId);
                 }
                 const pending = liveTurnsRef.current.get(PENDING_KEY);
+                // A draft's turn is the only one that may take over the draft view. A chat
+                // started elsewhere must never pull the user out of the chat they picked.
+                const bindsDraft = Boolean(pending && convId);
+                const adoptsView = bindsDraft && viewingIdRef.current === null;
                 const existing = (convId && liveTurnsRef.current.get(convId)) || pending;
-                let snapshot = existing?.messages ?? messagesRef.current;
+                const base =
+                    existing?.messages
+                    ?? (viewingIdRef.current === convId
+                        ? messagesRef.current
+                        : (convId && transcriptCacheRef.current.get(convId)) || []);
+                let snapshot = base;
                 if (startedModel) {
                     const latest = snapshot[snapshot.length - 1];
                     if (latest?.role === "assistant") {
@@ -370,9 +451,10 @@ export function ChatStreamProvider({ children }: { children: React.ReactNode }) 
                     activityLabel: "Thinking",
                     turnPhase: "thinking",
                 });
-                const stayOnThisTurn = !viewingIdRef.current || viewingIdRef.current === convId;
+                if (bindsDraft && convId) bindDraft(convId);
+                const stayOnThisTurn = adoptsView || viewingIdRef.current === convId;
                 if (stayOnThisTurn) {
-                    viewingIdRef.current = convId;
+                    if (adoptsView && convId) setViewed(convId);
                     turnIdRef.current = tid;
                     setIsLoading(true);
                     setSendError(null);
@@ -405,11 +487,15 @@ export function ChatStreamProvider({ children }: { children: React.ReactNode }) 
                             pending.conversationId = convId;
                             pending.turnId = meta?.turnId ?? pending.turnId;
                             liveTurnsRef.current.set(key, pending);
+                            bindDraft(key);
                         } else {
                             liveTurnsRef.current.set(key, {
                                 conversationId: convId,
                                 turnId: meta?.turnId ?? null,
-                                messages: viewingIdRef.current === convId ? messagesRef.current : [],
+                                messages:
+                                    viewingIdRef.current === convId
+                                        ? messagesRef.current
+                                        : (convId && transcriptCacheRef.current.get(convId)) || [],
                                 activityLabel: "Thinking",
                                 turnPhase: "thinking",
                             });
@@ -466,6 +552,9 @@ export function ChatStreamProvider({ children }: { children: React.ReactNode }) 
                     setChatGenerating(conversationId, false);
                     ignoredIdsRef.current.delete(conversationId);
                     liveTurnsRef.current.delete(conversationId);
+                    if (draftConversationIdRef.current === conversationId) {
+                        draftConversationIdRef.current = null;
+                    }
                 } else {
                     liveTurnsRef.current.delete(PENDING_KEY);
                 }
@@ -501,18 +590,7 @@ export function ChatStreamProvider({ children }: { children: React.ReactNode }) 
                 // Cancelled turns are persisted server-side — resync so Stop
                 // doesn't leave a wiped/empty assistant bubble.
                 if (error === "Cancelled") {
-                    void (async () => {
-                        try {
-                            const history = await commands.getChatHistory();
-                            if (!viewingIdRef.current || viewingIdRef.current === conversationId) {
-                                setMessages(history);
-                                setIsLoading(false);
-                                setActivityLabel(null);
-                            }
-                        } catch {
-                            /* ignore */
-                        }
-                    })();
+                    void reloadViewedMessages();
                     return;
                 }
                 setMessages((prev) => {
@@ -657,13 +735,20 @@ export function ChatStreamProvider({ children }: { children: React.ReactNode }) 
             }),
         );
 
-        void syncFromBackend();
+        void bootstrapFromBackend();
 
         return () => {
             disposed = true;
             unlisteners.forEach((fn) => fn());
         };
-    }, [syncFromBackend]);
+    }, [bootstrapFromBackend, reloadViewedMessages, setViewed]);
+
+    const getViewedConversationId = React.useCallback(() => viewingIdRef.current, []);
+    const getDraftConversationId = React.useCallback(() => draftConversationIdRef.current, []);
+    const hasLiveTurn = React.useCallback(
+        (id: string | null) => liveTurnsRef.current.has(id ?? PENDING_KEY),
+        [],
+    );
 
     const value: ChatStreamContextValue = {
         isLoading,
@@ -673,15 +758,21 @@ export function ChatStreamProvider({ children }: { children: React.ReactNode }) 
         turnId,
         sendError,
         contextSummarized,
+        viewedConversationId,
         setMessages,
         setSendError,
         setContextSummarized,
-        syncFromBackend,
+        getViewedConversationId,
+        getDraftConversationId,
+        showConversation,
+        isCurrentView,
+        reloadViewedMessages,
+        bootstrapFromBackend,
+        setDraftAdopter,
         appendUserOptimistic,
-        setViewingConversation,
-        resumeLiveConversation,
         stopLiveTurn,
         startDraftChat,
+        hasLiveTurn,
     };
 
     return (

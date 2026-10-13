@@ -10,22 +10,32 @@ use tauri::{Emitter, Manager};
 
 #[tauri::command]
 pub async fn stop_chat_message(
+    conversation_id: Option<String>,
     app: tauri::AppHandle,
     state: tauri::State<'_, AgentState>,
     pty_state: tauri::State<'_, crate::commands::pty::PtyState>,
 ) -> Result<(), AppError> {
-    let current_id = state
+    // Stop ends only the chat it was pressed in. Other chats that are still generating
+    // keep running. With no id, it falls back to the live chat.
+    let live_id = state
         .current_conversation_id
         .lock()
         .map_err(|e| AppError::Poison(e.to_string()))?
         .clone();
-    let already_cancelled = current_id
-        .as_deref()
-        .and_then(|id| state.conversation_cancel_token(id))
+    let target = conversation_id
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .or_else(|| live_id.clone());
+    let Some(target) = target else {
+        return Ok(());
+    };
+
+    let is_live = live_id.as_deref() == Some(target.as_str());
+    let already_cancelled = state
+        .conversation_cancel_token(&target)
         .map(|token| token.is_cancelled())
         .unwrap_or(false);
-    let generating = state.generation_state().is_generating;
-    if !generating {
+    if !state.is_generating_conversation(&target) {
         // Idle / launch remounts used to call stop and still abort captures +
         // kill PTYs below, which tore down WebView2 frames and reloaded the UI.
         return Ok(());
@@ -41,53 +51,59 @@ pub async fn stop_chat_message(
     let _ = app.emit("agent-browse", serde_json::json!({"id": "live", "status": "stopped"}));
     // Cancel first so waiters observe Stop instead of a fake Reject (which
     // used to look like accepted edits were undone).
-    if let Ok(map) = state.cancel_tokens.lock() {
-        for token in map.values() {
-            token.cancel();
-        }
+    if let Some(token) = state.conversation_cancel_token(&target) {
+        token.cancel();
     }
-    state.dismiss_unresolved_approvals();
+    if is_live {
+        // Approval prompts carry no chat id; only the chat on screen can own them.
+        state.dismiss_unresolved_approvals();
+    }
 
-    // Unlock the UI immediately — title gen / long HTTP must not leave the
-    // sidebar spinning until the upstream request finishes.
+    let project_path = state.current_project.lock().ok().and_then(|p| p.clone());
     let aborted = {
-        let turn_id = state.in_flight_turn_id();
-        let conv_id = state
-            .in_flight_conversation_id()
-            .or_else(|| state.current_conversation_id.lock().ok().and_then(|g| g.clone()));
-        let project_path = state.current_project.lock().ok().and_then(|p| p.clone());
+        let turn_id = state.in_flight_for(&target).map(|f| f.turn_id);
         if let Some(ref project) = project_path {
             crate::commands::stats::bump_event(project, "chat_stops");
         }
-        if let (Some(turn_id), Some(conv_id)) = (turn_id.clone(), conv_id.clone()) {
+        if let Some(ref tid) = turn_id {
             journals::save_turn_journal(&journals::TurnJournal {
-                conversation_id: conv_id.clone(),
-                turn_id: turn_id.clone(),
-                project_path,
+                conversation_id: target.clone(),
+                turn_id: tid.clone(),
+                project_path: project_path.clone(),
                 status: "interrupted".to_string(),
                 updated_at: history::now_f64(),
                 subagent_ids: Vec::new(),
                 note: Some("Stopped by user".to_string()),
             });
         }
-        turn_id.zip(conv_id)
+        turn_id.map(|tid| (tid, target.clone()))
     };
-    // Commit streamed assistant text into history *before* clearing in-flight.
-    // Otherwise Stop + frontend history resync wipes the bubble the user saw.
-    if let Ok(mut merged) = state.history_for_persistence() {
-        if let Some(last) = merged.last_mut() {
-            if last.role == "assistant" && last.content.contains("<browse_session") {
-                last.content = crate::agent::tools::browse::seal_browse_markup(&last.content);
+
+    // Commit streamed text into the chat's own record before releasing the turn, so Stop
+    // never wipes the bubble the user was reading.
+    if is_live {
+        if let Ok(mut merged) = state.history_for_persistence() {
+            if let Some(last) = merged.last_mut() {
+                if last.role == "assistant" && last.content.contains("<browse_session") {
+                    last.content = crate::agent::tools::browse::seal_browse_markup(&last.content);
+                }
+            }
+            if let Ok(mut hist) = state.history.lock() {
+                *hist = merged;
             }
         }
-        if let Ok(mut hist) = state.history.lock() {
-            *hist = merged;
+        if let Some(path) = project_path.as_deref() {
+            let _ = history::save_current_conversation(&state, path);
+        }
+    } else if let Some(path) = project_path.as_deref() {
+        // Background chat: its partial text goes to its stored record, not the live chat.
+        if let Some((_, conv)) = history::find_conversation_by_id(&target, Some(path)) {
+            let merged = state.merge_in_flight_into_history_for(conv.history, Some(target.as_str()));
+            let _ = history::upsert_and_persist_snapshot(&state, path, &target, &conv.title, merged);
         }
     }
-    if let Some(path) = state.current_project.lock().ok().and_then(|p| p.clone()) {
-        let _ = history::save_current_conversation(&state, &path);
-    }
-    state.clear_in_flight();
+    state.clear_in_flight_for(&target);
+
     if let Some((turn_id, conv_id)) = aborted {
         let _ = app.emit(
             "chat_complete",

@@ -4,6 +4,9 @@ import React from "react";
 import { listen } from "@tauri-apps/api/event";
 import { commands, Conversation, useProjectState } from "@/lib/backend";
 import { useChatStream } from "./chat-stream-store";
+import { isChatGenerating } from "./generating-chats";
+import { type ReasoningEffort } from "../ui/composer/reasoning-effort";
+import type { ChatMessage } from "@/lib/backend/types";
 import { NEW_CHAT_TAB_ID, DEMO_CHAT_TAB_ID, isEphemeralChatTabId, type ChatTab } from "../ui/shell/tabs";
 import { buildDemoChatMessages, isDemoChatPinned, setDemoChatPinned } from "./demo-chat";
 import { openChatHistoryMenu } from "../ui/shell/history";
@@ -48,6 +51,14 @@ import {
     processAttachment,
     type ComposerAttachment,
 } from "@/features/chat/ui/composer/attachments";
+import {
+    adoptDraftQueuedMessages,
+    canDrainQueue,
+    needsBackendPin,
+    queueForConversation,
+    takeNextQueuedMessage,
+    type QueuedChatMessage,
+} from "./message-queue";
 
 function chatTabsStorageKey(projectPath: string | null | undefined) {
     const norm = (projectPath || "").replace(/\\/g, "/").toLowerCase();
@@ -159,9 +170,12 @@ export function useChatSession() {
             return "";
         }
     });
-    const [messageQueue, setMessageQueue] = React.useState<{ id: string; content: string }[]>([]);
+    /** Every queued follow-up, across chats. Each one is bound to its `conversationId`. */
+    const [messageQueue, setMessageQueue] = React.useState<QueuedChatMessage[]>([]);
     const messageQueueRef = React.useRef(messageQueue);
     messageQueueRef.current = messageQueue;
+    /** Bumped when a send is delivered so the queue drains the next message for this chat. */
+    const [queueDrainTick, setQueueDrainTick] = React.useState(0);
     const [projectRuleFiles, setProjectRuleFiles] = React.useState<string[]>([]);
     const editingQueueIdRef = React.useRef<string | null>(null);
     const {
@@ -173,13 +187,19 @@ export function useChatSession() {
         setSendError,
         contextSummarized,
         setContextSummarized,
-        syncFromBackend,
+        viewedConversationId,
+        showConversation,
+        isCurrentView,
+        reloadViewedMessages,
+        setDraftAdopter,
+        getViewedConversationId,
+        getDraftConversationId,
         appendUserOptimistic,
-        setViewingConversation,
-        resumeLiveConversation,
         stopLiveTurn,
         startDraftChat,
+        hasLiveTurn,
     } = useChatStream();
+    const refreshMetadataRef = React.useRef<() => Promise<void>>(async () => {});
     const [recentConvs, setRecentConvs] = React.useState<Conversation[]>([]);
     const [chatTitle, setChatTitle] = React.useState<string>("New Chat");
     const [openChatTabs, setOpenChatTabs] = React.useState<ChatTab[]>([
@@ -196,7 +216,7 @@ export function useChatSession() {
     const [selectedMode, setSelectedMode] = React.useState("Code");
     const selectedModeRef = React.useRef(selectedMode);
     selectedModeRef.current = selectedMode;
-    const [reasoningEffort, setReasoningEffort] = React.useState<"low" | "high" | "ultra" | "max">(
+    const [reasoningEffort, setReasoningEffort] = React.useState<ReasoningEffort>(
         () => readComposerPrefs().effort || "low",
     );
     const [fastMode, setFastMode] = React.useState(() => readComposerPrefs().fast ?? true);
@@ -211,30 +231,29 @@ export function useChatSession() {
                   : mode,
         );
     }, []);
-    const [conversationId, setConversationId] = React.useState<string | null>(null);
+    // The chat on screen. It follows the user's choice only, never the backend pointer.
+    const conversationId = viewedConversationId;
 
-    const syncOpenTabs = React.useCallback((convId: string | null, title: string) => {
+    /** Keep the tab strip in step. Does not move the view (see the view effect below). */
+    const syncOpenTabs = React.useCallback((convId: string | null, title?: string) => {
         if (!convId) {
-            setActiveChatTabId(NEW_CHAT_TAB_ID);
             setOpenChatTabs((prev) => {
                 const hasDraft = prev.some((tab) => tab.id === NEW_CHAT_TAB_ID);
                 if (hasDraft) {
                     return prev.map((tab) =>
-                        tab.id === NEW_CHAT_TAB_ID ? { ...tab, title: title || "New Chat" } : tab,
+                        tab.id === NEW_CHAT_TAB_ID && title ? { ...tab, title } : tab,
                     );
                 }
                 return [{ id: NEW_CHAT_TAB_ID, title: title || "New Chat" }, ...prev];
             });
             return;
         }
-
-        setActiveChatTabId(convId);
         setOpenChatTabs((prev) => {
             const withoutDraft = prev.filter((tab) => tab.id !== NEW_CHAT_TAB_ID);
             const existing = withoutDraft.find((tab) => tab.id === convId);
             if (existing) {
                 return withoutDraft.map((tab) =>
-                    tab.id === convId ? { ...tab, title: title || tab.title } : tab,
+                    tab.id === convId && title ? { ...tab, title } : tab,
                 );
             }
             return [...withoutDraft, { id: convId, title: title || "Chat" }];
@@ -244,6 +263,17 @@ export function useChatSession() {
     const [resolvedFiles, setResolvedFiles] = React.useState<Set<string>>(() => new Set());
     /** Bumped on every Keep/Undo so pendingEdits recomputes after localStorage resolve. */
     const [resolveRevision, setResolveRevision] = React.useState(0);
+
+    /** Side data derived from a transcript of the chat on screen. */
+    const hydrateViewedExtras = React.useCallback(
+        (id: string | null, msgs: ChatMessage[] | null) => {
+            if (!id || !msgs) return;
+            syncProposedEditsFromMessages(msgs, id);
+            const persisted = getResolvedFiles(id);
+            setResolvedFiles(new Set(Object.keys(persisted)));
+        },
+        [],
+    );
 
     const { project_path } = useProjectState();
     const shapeAuth = useShapeAuth();
@@ -267,21 +297,23 @@ export function useChatSession() {
                 const activeId = persisted.activeId === DEMO_CHAT_TAB_ID ? NEW_CHAT_TAB_ID : persisted.activeId;
                 setOpenChatTabs(tabs);
                 setActiveChatTabId(activeId);
-                if (activeId !== NEW_CHAT_TAB_ID && !isEphemeralChatTabId(activeId)) {
+                if (activeId === NEW_CHAT_TAB_ID) {
+                    showConversation(null);
+                } else if (!isEphemeralChatTabId(activeId)) {
+                    const seq = showConversation(activeId);
                     try {
-                        await commands.loadConversation(
-                            activeId,
-                            project_path ?? undefined,
-                        );
+                        await commands.loadConversation(activeId, project_path ?? undefined);
                         if (!cancelled) {
                             clearAllDesignPreviewSessions();
                             setContextSummarized(false);
+                            const msgs = await reloadViewedMessages(seq);
+                            hydrateViewedExtras(activeId, msgs);
                         }
-                    } catch (err) {
-                        // Ephemeral / deleted tabs — fall back to a draft quietly.
-                        if (!cancelled) {
+                    } catch {
+                        // Ephemeral / deleted tabs fall back to a draft quietly.
+                        if (!cancelled && isCurrentView(seq)) {
+                            showConversation(null);
                             setOpenChatTabs([{ id: NEW_CHAT_TAB_ID, title: "New Chat" }]);
-                            setActiveChatTabId(NEW_CHAT_TAB_ID);
                         }
                     }
                 }
@@ -295,7 +327,14 @@ export function useChatSession() {
         return () => {
             cancelled = true;
         };
-    }, [project_path, setContextSummarized]);
+    }, [
+        project_path,
+        setContextSummarized,
+        showConversation,
+        reloadViewedMessages,
+        hydrateViewedExtras,
+        isCurrentView,
+    ]);
 
     React.useEffect(() => {
         let cancelled = false;
@@ -377,14 +416,7 @@ export function useChatSession() {
                 s.add(n);
                 return s;
             });
-            let convId = conversationId;
-            if (!convId) {
-                convId = await commands.getCurrentConversationId();
-                if (convId) {
-                    setConversationId(convId);
-                    setCurrentConversationId(convId);
-                }
-            }
+            const convId = conversationId;
             if (convId) {
                 markFileResolved(convId, file, status, replacement);
             }
@@ -591,7 +623,11 @@ export function useChatSession() {
                 : `The user rejected the pending edit to \`${first.file}\`. Redo that change if it is still needed.`;
         if (isLoadingRef.current) {
             setMessageQueue((prev) => [
-                { id: `q-reject-${Date.now()}`, content: notice },
+                {
+                    id: `q-reject-${Date.now()}`,
+                    content: notice,
+                    conversationId: conversationIdRef.current,
+                },
                 ...prev,
             ]);
         } else {
@@ -627,17 +663,21 @@ export function useChatSession() {
     const refreshMetadata = React.useCallback(async () => {
         try {
             const convs = await commands.getConversations(project_path ?? undefined);
-            const title = await commands.getChatTitle();
-            const convId = await commands.getCurrentConversationId();
             setRecentConvs(convs);
-            setChatTitle(title);
-            setConversationId(convId);
-            setCurrentConversationId(convId);
-            syncOpenTabs(convId, title);
+            const viewed = getViewedConversationId();
+            // The backend's current chat supplies the title only when it is the chat on screen.
+            const backendId = await commands.getCurrentConversationId();
+            if (backendId === viewed) {
+                const title = await commands.getChatTitle();
+                setChatTitle(title);
+                syncOpenTabs(viewed, title);
+            }
         } catch (err) {
             console.error("Failed to refresh chat metadata:", err);
         }
-    }, [project_path, syncOpenTabs]);
+    }, [project_path, syncOpenTabs, getViewedConversationId]);
+
+    refreshMetadataRef.current = refreshMetadata;
 
     const conversationIdRef = React.useRef(conversationId);
     React.useEffect(() => {
@@ -645,37 +685,26 @@ export function useChatSession() {
     }, [conversationId]);
 
     const refreshHistory = React.useCallback(
-        async (reloadConversation = false) => {
+        async () => {
             if (activeChatTabIdRef.current === DEMO_CHAT_TAB_ID || isDemoChatPinned()) return;
-            if (isLoadingRef.current && !reloadConversation) {
-                await syncFromBackend();
-                await refreshMetadata();
-                return;
-            }
             try {
                 const convs = await commands.getConversations(project_path ?? undefined);
-                const title = await commands.getChatTitle();
-                const convId = await commands.getCurrentConversationId();
-
                 setRecentConvs(convs);
-                setChatTitle(title);
-                setConversationId(convId);
-                setCurrentConversationId(convId);
-                syncOpenTabs(convId, title);
-
-                await syncFromBackend();
-                const currentHistory = await commands.getChatHistory();
-                syncProposedEditsFromMessages(currentHistory, convId);
-
-                if (convId) {
-                    const persisted = getResolvedFiles(convId);
-                    setResolvedFiles(new Set(Object.keys(persisted)));
-                }
+                await refreshMetadata();
+                const viewed = getViewedConversationId();
+                const msgs = await reloadViewedMessages();
+                hydrateViewedExtras(viewed, msgs);
             } catch (err) {
                 console.error("Failed to load chat history:", err);
             }
         },
-        [project_path, refreshMetadata, syncFromBackend, syncOpenTabs],
+        [
+            project_path,
+            refreshMetadata,
+            reloadViewedMessages,
+            hydrateViewedExtras,
+            getViewedConversationId,
+        ],
     );
 
     React.useEffect(() => {
@@ -689,12 +718,31 @@ export function useChatSession() {
         }
     }, [project_path]);
 
+    // Mirror the view into the backend-facing store and the tab strip.
     React.useEffect(() => {
-        void syncFromBackend();
-    }, [syncFromBackend]);
+        setCurrentConversationId(viewedConversationId);
+    }, [viewedConversationId]);
 
     React.useEffect(() => {
-        const handleRefresh = () => refreshHistory(true);
+        if (!tabsReady) return;
+        setActiveChatTabId(viewedConversationId ?? NEW_CHAT_TAB_ID);
+        const conv = viewedConversationId
+            ? recentConvs.find((c) => c.id === viewedConversationId)
+            : undefined;
+        syncOpenTabs(viewedConversationId, conv?.title);
+    }, [viewedConversationId, tabsReady, recentConvs, syncOpenTabs]);
+
+    // A draft's turn just got its real id: its queued follow-ups now belong to that chat.
+    React.useEffect(() => {
+        setDraftAdopter((convId) => {
+            setMessageQueue((prev) => adoptDraftQueuedMessages(prev, convId));
+            window.dispatchEvent(new CustomEvent("shape-chats-changed"));
+        });
+        return () => setDraftAdopter(null);
+    }, [setDraftAdopter]);
+
+    React.useEffect(() => {
+        const handleRefresh = () => refreshHistory();
         window.addEventListener("shape-chat-refresh", handleRefresh);
         return () => window.removeEventListener("shape-chat-refresh", handleRefresh);
     }, [refreshHistory]);
@@ -786,57 +834,107 @@ export function useChatSession() {
 
     const handleSendMessageRef = React.useRef<(overrideContent?: string) => Promise<boolean>>(async () => false);
     const handleNewChatRef = React.useRef<() => Promise<void>>(async () => {});
-    const sendingInFlightRef = React.useRef(false);
+    const sendToChatRef = React.useRef<(content: string, target: string) => Promise<boolean>>(
+        async () => false,
+    );
+    /** Sends currently awaiting the backend. A counter, so overlapping sends cannot clear each other. */
+    const sendsInFlightRef = React.useRef(0);
     const skipQueueDrainRef = React.useRef(false);
     const forceSendRef = React.useRef(false);
 
-    const handleSendMessage = async (overrideContent?: string): Promise<boolean> => {
-        const messageContent = typeof overrideContent === "string" ? overrideContent : inputValue;
-        const fromQueue = typeof overrideContent === "string";
+    /**
+     * Make `id` the backend's current chat. Only the backend-current operations (fork,
+     * restore checkpoint, redo, generation state) need this. Sends name their chat explicitly.
+     */
+    const activateBackend = React.useCallback(
+        async (id: string) => {
+            const backendId = await commands.getCurrentConversationId();
+            if (!needsBackendPin(backendId, id)) return;
+            const conv = recentConvs.find((c) => c.id === id);
+            await commands.loadConversation(id, conv?.project_path ?? project_path ?? undefined);
+            clearAllDesignPreviewSessions();
+            setContextSummarized(false);
+        },
+        [recentConvs, project_path, setContextSummarized],
+    );
 
-        if (!fromQueue && isLoading) {
-            if (!messageContent.trim() && uploadedFiles.length === 0) return false;
-            if (uploadedFiles.length > 0) return false;
-            const editingId = editingQueueIdRef.current;
-            if (editingId) {
-                setMessageQueue((prev) =>
-                    prev.map((m) =>
-                        m.id === editingId ? { ...m, content: messageContent.trim() } : m,
-                    ),
-                );
-                setInputValue("");
-                editingQueueIdRef.current = null;
-                try {
-                    localStorage.removeItem("shape-chat-input");
-                } catch {
-                    /* ignore */
+    const activateViewedBackend = React.useCallback(async () => {
+        const id = getViewedConversationId();
+        if (id) await activateBackend(id);
+    }, [activateBackend, getViewedConversationId]);
+
+    /**
+     * Put chat `id` on screen at once, then activate it and load its transcript. A slower
+     * load for a chat the user has since left is dropped.
+     */
+    const openConversation = React.useCallback(
+        async (id: string, projectPath?: string | null) => {
+            const seq = showConversation(id);
+            setSendError(null);
+            try {
+                await commands.loadConversation(id, projectPath ?? null);
+            } catch (err) {
+                if (!isCurrentView(seq)) return;
+                const message = err instanceof Error ? err.message : String(err);
+                if (!message.includes("Conversation not found")) {
+                    console.error("Failed to load conversation:", err);
                 }
-                return true;
+                startDraftChat();
+                await refreshMetadataRef.current();
+                return;
             }
+            if (!isCurrentView(seq)) return;
+            clearAllDesignPreviewSessions();
+            setContextSummarized(false);
+            const msgs = await reloadViewedMessages(seq);
+            hydrateViewedExtras(id, msgs);
+        },
+        [
+            showConversation,
+            isCurrentView,
+            setSendError,
+            startDraftChat,
+            setContextSummarized,
+            reloadViewedMessages,
+            hydrateViewedExtras,
+        ],
+    );
+
+    /** Queue a follow-up bound to `conversationId` (defaults to the chat on screen). */
+    const enqueueChatMessage = React.useCallback(
+        (content: string, conversationId?: string | null) => {
             const id = `q-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-            setMessageQueue((prev) => [...prev, { id, content: messageContent.trim() }]);
+            const owner = conversationId === undefined ? conversationIdRef.current : conversationId;
+            setMessageQueue((prev) => [...prev, { id, content: content.trim(), conversationId: owner }]);
+        },
+        [],
+    );
+
+    /** Put a queued message that could not be delivered back at the front of its chat's queue. */
+    const restoreQueuedMessage = React.useCallback((item: QueuedChatMessage) => {
+        setMessageQueue((prev) => (prev.some((m) => m.id === item.id) ? prev : [item, ...prev]));
+    }, []);
+
+    /**
+     * Deliver one message. `fromQueue` sends leave the composer alone: the user may be
+     * typing a new message, and any pending attachments belong to that message, not the
+     * queued one.
+     */
+    const sendMessageNow = async (
+        messageContent: string,
+        fromQueue: boolean,
+        targetId?: string | null,
+    ): Promise<boolean> => {
+        // The chat this message belongs to, fixed now: the user may switch chats mid-send.
+        const target = targetId !== undefined ? targetId : getViewedConversationId();
+        if (!fromQueue) {
             setInputValue("");
+            editingQueueIdRef.current = null;
             try {
                 localStorage.removeItem("shape-chat-input");
             } catch {
                 /* ignore */
             }
-            return true;
-        }
-
-        if (
-            (!messageContent.trim() && uploadedFiles.length === 0) ||
-            (!forceSendRef.current && (isLoading || sendingInFlightRef.current))
-        ) {
-            return false;
-        }
-        sendingInFlightRef.current = true;
-        setInputValue("");
-        editingQueueIdRef.current = null;
-        try {
-            localStorage.removeItem("shape-chat-input");
-        } catch {
-            /* ignore */
         }
 
         const waitForAttachments = async () => {
@@ -848,7 +946,7 @@ export function useChatSession() {
             }
             return uploadedFilesRef.current;
         };
-        const readyFiles = await waitForAttachments();
+        const readyFiles = fromQueue ? [] : await waitForAttachments();
 
         let userMsg = messageContent;
         const attachmentBlocks: string[] = [];
@@ -927,8 +1025,8 @@ export function useChatSession() {
             }
 
         setSendError(null);
-        appendUserOptimistic(userMsg);
-        setUploadedFiles([]);
+        appendUserOptimistic(userMsg, target);
+        if (!fromQueue) setUploadedFiles([]);
 
         try {
             if (!shapeAuth.loggedIn || !shapeAuth.accessToken) {
@@ -1023,6 +1121,7 @@ export function useChatSession() {
                 undefined,
                 subagentSend.models,
                 subagentSend.defaultModel,
+                target,
             );
             await refreshMetadata();
             return true;
@@ -1044,24 +1143,133 @@ export function useChatSession() {
                 return prev;
             });
             return false;
+        }
+    };
+
+    /**
+     * Deliver `content` to chat `target`. A busy target queues it there. The chat on screen
+     * uses the composer path. A background chat is sent to directly, so the view stays put.
+     */
+    const sendToChat = async (content: string, target: string): Promise<boolean> => {
+        // The chat the build belongs to comes on screen first. `openConversation` puts it on
+        // screen synchronously; its transcript load continues in the background.
+        if (target !== getViewedConversationId()) void openConversation(target);
+        // Busy means a turn is running in the target, or (for the chat on screen) a composer
+        // send is still in flight. Read from the store, not from a possibly stale closure.
+        const busy =
+            hasLiveTurn(target) ||
+            isChatGenerating(target) ||
+            (target === getViewedConversationId() && sendsInFlightRef.current > 0);
+        if (busy) {
+            enqueueChatMessage(content, target);
+            return true;
+        }
+        sendsInFlightRef.current += 1;
+        let sent = false;
+        try {
+            sent = await sendMessageNow(content, true, target);
+            return sent;
         } finally {
-            sendingInFlightRef.current = false;
+            sendsInFlightRef.current -= 1;
+            if (sent) {
+                setQueueDrainTick((t) => t + 1);
+            } else {
+                // A failed delivery goes back to the front of its own chat's queue.
+                restoreQueuedMessage({
+                    id: `q-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                    content,
+                    conversationId: target,
+                });
+            }
+        }
+    };
+
+    const handleSendMessage = async (overrideContent?: string): Promise<boolean> => {
+        const messageContent = typeof overrideContent === "string" ? overrideContent : inputValue;
+        const fromQueue = typeof overrideContent === "string";
+
+        if (!fromQueue && isLoading) {
+            if (!messageContent.trim() && uploadedFiles.length === 0) return false;
+            if (uploadedFiles.length > 0) return false;
+            const editingId = editingQueueIdRef.current;
+            if (editingId) {
+                setMessageQueue((prev) =>
+                    prev.map((m) =>
+                        m.id === editingId ? { ...m, content: messageContent.trim() } : m,
+                    ),
+                );
+                setInputValue("");
+                editingQueueIdRef.current = null;
+                try {
+                    localStorage.removeItem("shape-chat-input");
+                } catch {
+                    /* ignore */
+                }
+                return true;
+            }
+            enqueueChatMessage(messageContent);
+            setInputValue("");
+            try {
+                localStorage.removeItem("shape-chat-input");
+            } catch {
+                /* ignore */
+            }
+            return true;
+        }
+
+        if (
+            (!messageContent.trim() && uploadedFiles.length === 0) ||
+            (!forceSendRef.current && (isLoading || sendsInFlightRef.current > 0))
+        ) {
+            return false;
+        }
+
+        sendsInFlightRef.current += 1;
+        let sent = false;
+        try {
+            sent = await sendMessageNow(messageContent, fromQueue);
+            return sent;
+        } finally {
+            sendsInFlightRef.current -= 1;
+            // Only a delivered send frees the next queued message. A failed one is restored
+            // to the queue instead, so a persistent failure cannot spin the drain forever.
+            if (sent) setQueueDrainTick((t) => t + 1);
         }
     };
 
     React.useEffect(() => {
         handleSendMessageRef.current = handleSendMessage;
+        sendToChatRef.current = sendToChat;
     });
 
+    // Drain only the queue of the chat on screen, and only once it is idle with no send
+    // pending. The send's own completion bumps `queueDrainTick`, so a finished turn can
+    // never race its successor and drop the queued follow-up.
     React.useEffect(() => {
-        if (isLoading) return;
-        if (skipQueueDrainRef.current) return;
-        const q = messageQueueRef.current;
-        if (q.length === 0) return;
-        const [next, ...rest] = q;
-        setMessageQueue(rest);
-        void handleSendMessageRef.current(next.content);
-    }, [isLoading]);
+        if (
+            !canDrainQueue({
+                isLoading,
+                sendsInFlight: sendsInFlightRef.current,
+                skipDrain: skipQueueDrainRef.current,
+            })
+        ) {
+            return;
+        }
+        const taken = takeNextQueuedMessage(messageQueueRef.current, conversationId);
+        if (!taken) return;
+        messageQueueRef.current = taken.rest;
+        setMessageQueue(taken.rest);
+        const item = taken.item;
+        void handleSendMessageRef.current(item.content).then(
+            (sent) => {
+                if (!sent) restoreQueuedMessage(item);
+            },
+            (err) => {
+                console.error("Failed to send queued message:", err);
+                restoreQueuedMessage(item);
+            },
+        );
+    }, [isLoading, conversationId, queueDrainTick, restoreQueuedMessage]);
 
     const handleEditQueuedMessage = React.useCallback((id: string) => {
         setMessageQueue((prev) => {
@@ -1100,17 +1308,26 @@ export function useChatSession() {
 
     React.useEffect(() => {
         const handleBuildPlan = (e: Event) => {
-            const custom = e as CustomEvent<{ path: string; title?: string }>;
+            const custom = e as CustomEvent<{
+                path: string;
+                title?: string;
+                conversationId?: string | null;
+            }>;
             if (!custom.detail?.path) return;
-            if (isLoadingRef.current) return;
+            const message = buildPlanBuildMessage(custom.detail.path, custom.detail.title);
             setSelectedMode("Code");
-            void handleSendMessageRef.current(
-                buildPlanBuildMessage(custom.detail.path, custom.detail.title),
-            );
+            // The plan names the chat it was created in. Without a name, use the chat on screen.
+            const target = custom.detail.conversationId || getViewedConversationId();
+            if (!target) {
+                if (isLoadingRef.current) enqueueChatMessage(message, null);
+                else void handleSendMessageRef.current(message);
+                return;
+            }
+            void sendToChatRef.current(message, target);
         };
         window.addEventListener("shape-build-plan", handleBuildPlan);
         return () => window.removeEventListener("shape-build-plan", handleBuildPlan);
-    }, []);
+    }, [enqueueChatMessage, getViewedConversationId]);
 
     React.useEffect(() => {
         const handleInsertPrompt = (e: Event) => {
@@ -1126,13 +1343,14 @@ export function useChatSession() {
                 new CustomEvent("shape-layout-toggle", { detail: { id: "secondary-sidebar", value: true } }),
             );
             if (detail.send) {
-                void handleSendMessageRef.current(detail.prompt);
+                if (isLoadingRef.current) enqueueChatMessage(detail.prompt);
+                else void handleSendMessageRef.current(detail.prompt);
             }
         };
         window.addEventListener("shape-chat-insert-prompt", handleInsertPrompt as EventListener);
         return () =>
             window.removeEventListener("shape-chat-insert-prompt", handleInsertPrompt as EventListener);
-    }, []);
+    }, [enqueueChatMessage]);
 
     const messagesRef = React.useRef(messages);
     React.useEffect(() => {
@@ -1169,6 +1387,8 @@ export function useChatSession() {
                     const parsed = parseUserAttachments(msg.content);
                     const files = await attachmentsToComposer(parsed.attachments);
 
+                    await activateViewedBackend();
+
                     await commands.restoreCheckpoint(msgIdx);
                     clearAllDesignPreviewSessions();
                     const convId = conversationIdRef.current;
@@ -1196,6 +1416,8 @@ export function useChatSession() {
                 } = await import("@/features/chat/lib/user-attachments");
                 const parsed = parseUserAttachments(msg.content);
 
+                await activateViewedBackend();
+
                 await commands.restoreCheckpoint(msgIdx);
                 clearAllDesignPreviewSessions();
                 setInputValue(parsed.text);
@@ -1213,7 +1435,7 @@ export function useChatSession() {
                 console.error("Failed to restore checkpoint:", err);
             }
         },
-        [refreshHistory],
+        [refreshHistory, activateViewedBackend],
     );
 
     const handleRedo = React.useCallback(
@@ -1233,10 +1455,11 @@ export function useChatSession() {
                 const userContent = msgs[userMsgIdx].content;
                 // restore_checkpoint cancels any in-flight turn; wait until the
                 // slot is free so the resent message is not silently dropped.
+                await activateViewedBackend();
                 await commands.restoreCheckpoint(userMsgIdx);
                 clearAllDesignPreviewSessions();
                 for (let i = 0; i < 40; i++) {
-                    const gen = await commands.getChatGenerationState();
+                    const gen = await commands.getChatGenerationState(getViewedConversationId());
                     if (!gen.isGenerating) break;
                     await new Promise((r) => setTimeout(r, 50));
                 }
@@ -1246,26 +1469,32 @@ export function useChatSession() {
                 console.error("Failed to redo message:", err);
             }
         },
-        [refreshHistory],
+        [refreshHistory, activateViewedBackend, getViewedConversationId],
     );
 
     const handleForkChat = React.useCallback(
         async (msgIdx: number) => {
             try {
+                await activateViewedBackend();
                 const res = await commands.forkConversation(msgIdx);
-                const history = await commands.getChatHistory();
-                setMessages(history);
-                setConversationId(res.id);
-                setCurrentConversationId(res.id);
+                const seq = showConversation(res.id);
                 setChatTitle(res.title);
-                setViewingConversation(res.id);
                 syncOpenTabs(res.id, res.title);
-                await refreshHistory(true);
+                const msgs = await reloadViewedMessages(seq);
+                hydrateViewedExtras(res.id, msgs);
+                void refreshHistory();
             } catch (err) {
                 console.error("Failed to fork chat:", err);
             }
         },
-        [refreshHistory, setMessages, setConversationId, setCurrentConversationId, setChatTitle, setViewingConversation, syncOpenTabs],
+        [
+            activateViewedBackend,
+            showConversation,
+            reloadViewedMessages,
+            hydrateViewedExtras,
+            syncOpenTabs,
+            refreshHistory,
+        ],
     );
 
     React.useEffect(() => {
@@ -1355,18 +1584,16 @@ export function useChatSession() {
                 const message = event.payload?.message;
                 if (!cid || !message) return;
                 void (async () => {
-                    if (conversationIdRef.current !== cid) {
-                        try {
-                            await commands.loadConversation(cid);
-                            setConversationId(cid);
-                            setCurrentConversationId(cid);
-                            setActiveChatTabId(cid);
-                        } catch {
-                            return;
-                        }
+                    if (getViewedConversationId() !== cid) await openConversation(cid);
+                    if (isChatGenerating(cid)) {
+                        enqueueChatMessage(message, cid);
+                        return;
                     }
-                    if (isLoadingRef.current) return;
-                    await handleSendMessageRef.current(message);
+                    if (getViewedConversationId() === cid) {
+                        await handleSendMessageRef.current(message);
+                    } else {
+                        await sendToChatRef.current(message, cid);
+                    }
                 })();
             }),
         );
@@ -1378,13 +1605,7 @@ export function useChatSession() {
                 if (!title || !convId) return;
                 syncOpenTabs(convId, title);
                 window.dispatchEvent(new CustomEvent("shape-chats-changed"));
-                const current = conversationIdRef.current;
-                // Never steal a background chat's id/title onto an idle New Chat draft.
-                if (current && current !== convId) return;
-                if (!current && !isLoadingRef.current) return;
-                setChatTitle(title);
-                setConversationId(convId);
-                setCurrentConversationId(convId);
+                if (getViewedConversationId() === convId) setChatTitle(title);
             }),
         );
 
@@ -1392,24 +1613,21 @@ export function useChatSession() {
             disposed = true;
             unlisteners.forEach((fn) => fn());
         };
-    }, [syncOpenTabs]);
+    }, [syncOpenTabs, enqueueChatMessage, openConversation, getViewedConversationId]);
 
     const openDemoChat = React.useCallback(() => {
         setDemoChatPinned(true);
         setSendError(null);
         clearAllDesignPreviewSessions();
         setContextSummarized(false);
-        setMessages(buildDemoChatMessages());
+        showConversation(DEMO_CHAT_TAB_ID, buildDemoChatMessages());
         setChatTitle("Demo");
-        setConversationId(DEMO_CHAT_TAB_ID);
-        setCurrentConversationId(DEMO_CHAT_TAB_ID);
-        setActiveChatTabId(DEMO_CHAT_TAB_ID);
         setOpenChatTabs((prev) => {
             const others = prev.filter((tab) => tab.id !== DEMO_CHAT_TAB_ID && tab.id !== NEW_CHAT_TAB_ID);
             return [{ id: DEMO_CHAT_TAB_ID, title: "Demo" }, ...others];
         });
         window.dispatchEvent(new Event("shape-chat-focus-input"));
-    }, [setMessages, setContextSummarized]);
+    }, [showConversation, setContextSummarized, setSendError]);
 
     React.useEffect(() => {
         const onDemo = () => openDemoChat();
@@ -1426,13 +1644,11 @@ export function useChatSession() {
             if (!isIncognitoChat()) void captureTelemetry("chat_new");
             clearAllDesignPreviewSessions();
             setSendError(null);
-            setMessages([]);
             setContextSummarized(false);
             void import("@/features/agent/subagents/store").then(({ resetSubagentsForParent }) => {
                 resetSubagentsForParent(conversationIdRef.current);
             });
             setChatTitle("New Chat");
-            setConversationId(null);
             setResolvedFiles(new Set());
             clearAllProposedEdits();
             setOpenChatTabs((prev) => {
@@ -1440,7 +1656,7 @@ export function useChatSession() {
                 return [{ id: NEW_CHAT_TAB_ID, title: "New Chat" }, ...others];
             });
             setActiveChatTabId(NEW_CHAT_TAB_ID);
-            await refreshHistory(true);
+            void refreshHistory();
         } catch (err) {
             console.error("Failed to start new chat:", err);
         }
@@ -1462,24 +1678,13 @@ export function useChatSession() {
             return;
         }
         setDemoChatPinned(false);
-        if (resumeLiveConversation(tabId)) {
-            setConversationId(tabId);
-            setCurrentConversationId(tabId);
-            const conv = recentConvs.find((c) => c.id === tabId);
-            syncOpenTabs(tabId, conv?.title || "Chat");
-            return;
-        }
         try {
-            const conv = recentConvs.find((c) => c.id === tabId);
-            setViewingConversation(tabId);
             await setIncognitoChat(false);
-            await commands.loadConversation(tabId, conv?.project_path ?? project_path);
-            clearAllDesignPreviewSessions();
-            setContextSummarized(false);
-            await refreshHistory(true);
-        } catch (err) {
-            console.error("Failed to switch chat tab:", err);
+        } catch {
+            /* ignore */
         }
+        const conv = recentConvs.find((c) => c.id === tabId);
+        await openConversation(tabId, conv?.project_path ?? project_path);
     };
 
     const handleCloseChatTab = async (tabId: string) => {
@@ -1492,8 +1697,7 @@ export function useChatSession() {
         if (remaining.length === 0) {
             setOpenChatTabs([{ id: NEW_CHAT_TAB_ID, title: "New Chat" }]);
             setActiveChatTabId(NEW_CHAT_TAB_ID);
-            setMessages([]);
-            setConversationId(null);
+            startDraftChat();
             setChatTitle("New Chat");
             window.dispatchEvent(
                 new CustomEvent("shape-layout-toggle", {
@@ -1544,40 +1748,17 @@ export function useChatSession() {
     const handleLoadConversation = React.useCallback(
         async (id: string, options?: { force?: boolean }) => {
             if (id !== DEMO_CHAT_TAB_ID) setDemoChatPinned(false);
-            const isSameConversation = id === conversationIdRef.current;
+            const isSameConversation = id === getViewedConversationId();
             const hasVisibleMessages = messagesRef.current.length > 0;
-            if (resumeLiveConversation(id)) {
-                setConversationId(id);
-                setCurrentConversationId(id);
-                const liveConv = recentConvs.find((c) => c.id === id);
-                syncOpenTabs(id, liveConv?.title || "Chat");
-                return;
-            }
             if (!options?.force && isSameConversation && hasVisibleMessages) return;
-
             const conv =
                 recentConvs.find((c) => c.id === id)
                 ?? (project_path
                     ? null
                     : (await commands.getConversations()).find((c) => c.id === id));
-
-            try {
-                setViewingConversation(id);
-                await commands.loadConversation(id, conv?.project_path ?? project_path);
-                clearAllDesignPreviewSessions();
-                setContextSummarized(false);
-                const history = await commands.getChatHistory();
-                setMessages(history);
-                await refreshHistory(true);
-            } catch (err) {
-                const message = err instanceof Error ? err.message : String(err);
-                if (!message.includes("Conversation not found")) {
-                    console.error("Failed to load conversation:", err);
-                }
-                await refreshMetadata();
-            }
+            await openConversation(id, conv?.project_path ?? project_path);
         },
-        [refreshHistory, recentConvs, project_path, refreshMetadata, setMessages, setContextSummarized, resumeLiveConversation, setViewingConversation, syncOpenTabs],
+        [recentConvs, project_path, openConversation, getViewedConversationId],
     );
 
     React.useEffect(() => {
@@ -1625,8 +1806,8 @@ export function useChatSession() {
         stoppingRef.current = true;
         stopLiveTurn();
         try {
-            const convId = conversationIdRef.current;
-            await commands.stopChatMessage();
+            const convId = getViewedConversationId() ?? getDraftConversationId();
+            await commands.stopChatMessage(convId);
             if (convId) {
                 const { setChatGenerating } = await import("@/features/chat/lib/generating-chats");
                 setChatGenerating(convId, false);
@@ -1650,11 +1831,19 @@ export function useChatSession() {
         if (isLoadingRef.current) {
             await handleStopMessage();
         }
+        let delivered = false;
         try {
-            await handleSendMessageRef.current(item.content);
+            delivered = await handleSendMessageRef.current(item.content);
+            if (!delivered) restoreQueuedMessage(item);
+        } catch (err) {
+            console.error("Failed to send queued message:", err);
+            restoreQueuedMessage(item);
         } finally {
             forceSendRef.current = false;
             skipQueueDrainRef.current = false;
+            // Re-run the drain only now that skip is cleared, or the next queued
+            // message would be passed over until some unrelated state change.
+            if (delivered) setQueueDrainTick((t) => t + 1);
         }
     };
 
@@ -1713,7 +1902,7 @@ export function useChatSession() {
         handleStopMessage,
         messageGroups,
         refreshHistory,
-        messageQueue,
+        messageQueue: queueForConversation(messageQueue, conversationId),
         handleEditQueuedMessage,
         handleRemoveQueuedMessage,
         handleSendQueuedNow,

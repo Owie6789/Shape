@@ -9,6 +9,7 @@ import { Folder20Filled } from "@fluentui/react-icons/headless/svg/folder";
 import { MoreHorizontal20Regular } from "@fluentui/react-icons/headless/svg/more-horizontal";
 
 import React from "react";
+import { useChatStreamOptional } from "@/features/chat/lib/chat-stream-store";
 import { cn } from "@/lib/utils";
 import { toTimestampMs } from "@/lib/ui/timestamp";
 import { MessageRenderer, parseMessageContent, extractWebSearchResults } from "../md/renderer";
@@ -46,7 +47,6 @@ import { UserMessageCard } from "./bubble";
 import { ContextChip, MentionChipIcon, WorkflowChipIcon } from "./context-chip";
 import { GeneratingIndicator } from "../blocks/generating";
 import { isAutoModelId } from "@/lib/chat/usage-display";
-import { commands } from "@/lib/backend/commands";
 import { parseUserAttachments } from "../../lib/user-attachments";
 import type { ParsedUserAttachment } from "../../lib/user-attachments";
 import { MessageAttachmentPill } from "../composer/attachments";
@@ -296,6 +296,7 @@ function ChatMessageItemInner({
     onFork,
     isFileEditResolved,
 }: ChatMessageItemProps) {
+    const viewedMessages = useChatStreamOptional().messages;
     const [expanded, setExpanded] = React.useState(false);
     const [forkOpen, setForkOpen] = React.useState(false);
     const [menuOpen, setMenuOpen] = React.useState(false);
@@ -550,12 +551,11 @@ function ChatMessageItemInner({
                             return;
                         }
                         if (typeof index !== "number" || index < 0) return;
-                        void commands.getChatHistory().then((history) => {
-                            const msg = history[index];
-                            if (!msg || msg.role !== "assistant") return;
+                        const msg = viewedMessages[index];
+                        if (msg && msg.role === "assistant") {
                             if (msg.stats) setMenuStats(msg.stats);
                             if (msg.model) setMenuModel(msg.model);
-                        }).catch(() => {});
+                        }
                     }}
                     >
                         <DropdownMenuTrigger asChild>
