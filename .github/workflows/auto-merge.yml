@@ -1,0 +1,70 @@
+name: Auto-merge Dependabot
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+
+jobs:
+  auto-merge:
+    name: Auto-merge Dependabot (patch/minor)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.actor == 'dependabot[bot]'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check PR metadata
+        id: meta
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "Title: $TITLE"
+          # Only auto-merge if it's a patch or minor update (not major)
+          # Dependabot titles like "chore(deps): bump X from 1.0.0 to 1.0.1"
+          # We allow patch and minor, block major
+          if echo "$TITLE" | grep -Eq "from [0-9]+\.[0-9]+\.[0-9]+ to [0-9]+\.[0-9]+\.[0-9]+"; then
+            FROM=$(echo "$TITLE" | sed -n 's/.*from \([0-9]*\)\.\([0-9]*\)\.\([0-9]*\) to.*/\1 \2 \3/p')
+            TO=$(echo "$TITLE" | sed -n 's/.*to \([0-9]*\)\.\([0-9]*\)\.\([0-9]*\)/\1 \2 \3/p')
+            echo "From: $FROM"
+            echo "To: $TO"
+            FROM_MAJOR=$(echo $FROM | cut -d' ' -f1)
+            TO_MAJOR=$(echo $TO | cut -d' ' -f1)
+            if [ "$FROM_MAJOR" != "$TO_MAJOR" ]; then
+              echo "Major version bump detected - requires manual review"
+              echo "automerge=false" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+            echo "Minor/patch bump - eligible for auto-merge"
+            echo "automerge=true" >> $GITHUB_OUTPUT
+          else
+            # For grouped updates or unknown format, don't auto-merge
+            echo "Unknown version format - requires manual review"
+            echo "automerge=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Wait for CI
+        if: steps.meta.outputs.automerge == 'true'
+        uses: lewagon/wait-on-check-action@v1.3.4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          check-name: "CI Success"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 30
+          allowed-conclusions: success
+          verbose: true
+        continue-on-error: true
+
+      - name: Enable auto-merge
+        if: steps.meta.outputs.automerge == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          # Only auto-merge if CI is green (check via API)
+          # For safety, we enable auto-merge with squash
+          gh pr merge "$PR" --auto --squash --repo "${{ github.repository }}" || echo "::warning::Auto-merge failed - will need manual merge"

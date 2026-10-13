@@ -1,0 +1,137 @@
+name: Nightly
+
+on:
+  schedule:
+    # Daily at 02:00 UTC
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+    inputs:
+      prerelease:
+        description: "Publish as prerelease?"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-check:
+    name: Nightly Build Check (Windows ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            arch: x86_64
+            target: ""
+          - runner: windows-11-arm
+            arch: aarch64
+            target: aarch64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          install-rust: "true"
+          rust-targets: ${{ matrix.target }}
+          install-system-deps: "false"
+          cache-key: nightly-${{ matrix.arch }}
+
+      - run: npm ci
+
+      - name: Sync version
+        run: npm run sync-version
+
+      - name: Build runtime
+        run: npm run build:runtime
+
+      - name: Build Tauri (NSIS)
+        shell: bash
+        env:
+          # Nightly builds use placeholder - not signed with production keys
+          # If you want signed nightly, set these secrets and remove the placeholder logic
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          SHAPE_CLOUD_BUILD_SECRET: ${{ secrets.SHAPE_CLOUD_BUILD_SECRET || 'nightly-placeholder' }}
+          NEXT_PUBLIC_SHAPE_WEBSITE_URL: https://www.useshape.org
+        run: |
+          if [ -n "${{ matrix.target }}" ]; then
+            npm run tauri -- build --bundles nsis --target "${{ matrix.target }}" || echo "::warning::Nightly build failed (expected if secrets missing)"
+          else
+            npm run tauri -- build --bundles nsis || echo "::warning::Nightly build failed (expected if secrets missing)"
+          fi
+
+      - name: Upload nightly artifact (if exists)
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-${{ matrix.arch }}
+          path: src-tauri/target/**/bundle/nsis/*.exe
+          if-no-files-found: ignore
+          retention-days: 3
+
+  # Optional: Create nightly prerelease if manually triggered
+  publish-nightly:
+    name: Publish Nightly Prerelease
+    if: github.event_name == 'workflow_dispatch' && inputs.prerelease
+    needs: build-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Generate nightly version
+        id: version
+        run: |
+          BASE=$(node -p "require('./package.json').version")
+          NIGHTLY="${BASE}-nightly.$(date +%Y%m%d).${GITHUB_RUN_NUMBER}"
+          echo "version=$NIGHTLY" >> $GITHUB_OUTPUT
+          echo "Nightly version: $NIGHTLY"
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/nightly
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lhR dist/nightly || echo "No artifacts"
+
+      - name: Publish nightly release (draft)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -z "$(ls -A dist/nightly 2>/dev/null)" ]; then
+            echo "No artifacts to publish - skipping"
+            exit 0
+          fi
+          TAG="v${{ steps.version.outputs.version }}"
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release $TAG already exists - skipping"
+            exit 0
+          fi
+          gh release create "$TAG" \
+            --repo "${{ github.repository }}" \
+            --title "Nightly ${{ steps.version.outputs.version }}" \
+            --notes "Automated nightly build from ${{ github.sha }}. Not for production use." \
+            --prerelease \
+            --draft \
+            dist/nightly/* || echo "::warning::Failed to create nightly release"

@@ -1,0 +1,187 @@
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly on Monday at 00:00 UTC
+    - cron: "0 0 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # ─────────────────────────────────────────────────────────
+  # CodeQL - SAST for JS/TS and Rust
+  # ─────────────────────────────────────────────────────────
+  codeql:
+    name: CodeQL (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [javascript-typescript, rust]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          install-rust: "true"
+          install-system-deps: ${{ matrix.language == 'rust' && 'true' || 'false' }}
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-and-quality
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+        # For JS/TS, autobuild is no-op (interpreted). For Rust, it runs cargo build.
+        # We also ensure preview runtime is built for Next.js.
+        # If autobuild fails, we fallback to manual build.
+      - name: Manual build fallback (Next.js)
+        if: matrix.language == 'javascript-typescript'
+        run: |
+          npm ci
+          npm run build:runtime
+          npm run build || true
+        env:
+          NEXT_PUBLIC_SHAPE_WEBSITE_URL: https://www.useshape.org
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
+
+  # ─────────────────────────────────────────────────────────
+  # Dependency Review - block PRs with vulnerable deps
+  # ─────────────────────────────────────────────────────────
+  dependency-review:
+    name: Dependency Review
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+          deny-licenses: GPL-2.0, GPL-3.0
+          comment-summary-in-pr: on-failure
+
+  # ─────────────────────────────────────────────────────────
+  # Audit: npm + cargo (scheduled + on demand)
+  # ─────────────────────────────────────────────────────────
+  audit:
+    name: Audit Dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          install-rust: "true"
+          install-system-deps: "false"
+
+      - run: npm ci
+
+      - name: npm audit (high and above)
+        run: |
+          npm audit --audit-level=high --json > npm-audit.json || true
+          cat npm-audit.json | head -n 200
+          # Fail only on high/critical if you want strict:
+          # npm audit --audit-level=high
+          # For now, warn but don't block PRs unless critical
+          if npm audit --audit-level=critical; then
+            echo "✓ No critical npm vulnerabilities"
+          else
+            echo "::warning::Critical npm vulnerabilities found - check npm-audit.json"
+            # Uncomment to block:
+            # exit 1
+          fi
+
+      - name: Install cargo-audit
+        run: |
+          cargo install cargo-audit --locked || true
+
+      - name: cargo audit
+        run: |
+          cargo audit --json > cargo-audit.json || true
+          cat cargo-audit.json | head -n 200
+          cargo audit || echo "::warning::cargo audit found issues"
+
+      - name: Upload audit reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit-reports
+          path: |
+            npm-audit.json
+            cargo-audit.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # ─────────────────────────────────────────────────────────
+  # Zizmor - GitHub Actions workflow linter (supply chain)
+  # ─────────────────────────────────────────────────────────
+  zizmor:
+    name: Zizmor (Actions Linter)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run zizmor
+        uses: zizmorcore/zizmor-action@v0.1.0
+        with:
+          persona: auditable
+        continue-on-error: true
+
+  # ─────────────────────────────────────────────────────────
+  # OpenSSF Scorecard (supply chain health)
+  # ─────────────────────────────────────────────────────────
+  scorecard:
+    name: OpenSSF Scorecard
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name != 'pull_request'
+    permissions:
+      security-events: write
+      id-token: write
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Run Scorecard
+        uses: ossf/scorecard-action@v2.4.1
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      - name: Upload Scorecard results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif

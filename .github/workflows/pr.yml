@@ -1,0 +1,89 @@
+name: PR Hygiene
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  title-lint:
+    name: PR Title Lint (Conventional)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check PR title follows conventional commits area prefix
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "PR Title: $TITLE"
+          # Allow conventional: area: description  or  type(area): description  or  area(scope): ...
+          # Examples: agent: fix streaming, git: improve graph, docs: update readme, chore: bump deps
+          # Also allow: fix: ..., feat: ..., chore: ...
+          # Regex: ^[a-z0-9-]+(\([^\)]+\))?: .{5,}
+          if echo "$TITLE" | grep -Eq '^[a-z0-9-]+(\([^)]+\))?: .{5,}$'; then
+            echo "✓ Title looks good (area: description)"
+            exit 0
+          fi
+          # Also allow conventional types without area? e.g. fix: ..., feat: ...
+          if echo "$TITLE" | grep -Eq '^(feat|fix|chore|docs|ci|refactor|test|perf|build|style|security)(\(.+\))?: .{5,}$'; then
+            echo "✓ Title follows conventional type"
+            exit 0
+          fi
+          echo "::warning::PR title '$TITLE' doesn't match preferred format 'area: short summary'"
+          echo "Preferred examples: 'agent: fix streaming race', 'git: improve graph perf', 'docs: update quickstart'"
+          echo "This is a warning only - not blocking, but please consider updating."
+          # Don't fail, just warn - change to exit 1 if you want strict enforcement
+          exit 0
+
+  check-large-files:
+    name: Check Large Files & Secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for large files (>5MB)
+        run: |
+          LARGE=$(find . -type f -size +5M \
+            -not -path "./.git/*" \
+            -not -path "./node_modules/*" \
+            -not -path "./src-tauri/target/*" \
+            -not -path "./.next/*" \
+            -not -path "./out/*" \
+            -not -path "./dist/*" 2>/dev/null || true)
+          if [ -n "$LARGE" ]; then
+            echo "::error::Large files detected (>5MB):"
+            echo "$LARGE"
+            exit 1
+          fi
+          echo "✓ No large files"
+
+      - name: Check for accidentally committed secrets patterns
+        run: |
+          # Simple heuristic - look for common secret patterns in diff
+          if git diff origin/main...HEAD --unified=0 | grep -Ei "(BEGIN PRIVATE KEY|sk-ant-|sk-proj-|ghp_|gho_|AKIA|aws_secret_access_key|TAURI_SIGNING_PRIVATE_KEY)" | grep -v "example" | grep -v ".gitignore"; then
+            echo "::error::Potential secret detected in diff - please review"
+            exit 1
+          fi
+          echo "✓ No obvious secrets in diff"
+
+  label-check:
+    name: Label Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Check if PR is too large
+        env:
+          ADDITIONS: ${{ github.event.pull_request.additions }}
+          DELETIONS: ${{ github.event.pull_request.deletions }}
+        run: |
+          TOTAL=$((ADDITIONS + DELETIONS))
+          echo "Changes: +$ADDITIONS -$DELETIONS = $TOTAL total"
+          if [ "$TOTAL" -gt 2000 ]; then
+            echo "::warning::Large PR ($TOTAL lines). Consider splitting into smaller PRs."
+          fi

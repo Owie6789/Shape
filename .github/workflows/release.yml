@@ -4,50 +4,81 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. v1.0.3). Must already exist if using workflow_dispatch."
+        required: false
+        type: string
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
+  # ─────────────────────────────────────────────────────────
+  # Gate: tests + tag/version validation
+  # ─────────────────────────────────────────────────────────
   test:
-    name: Test
+    name: Test & Validate Tag
     runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
         with:
-          node-version: "22"
-          cache: npm
+          fetch-depth: 0
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
+      - name: Setup
+        uses: ./.github/actions/setup
         with:
-          workspaces: src-tauri -> target
+          install-rust: "true"
+          install-system-deps: "true"
+          cache-key: "release"
 
       - run: npm ci
 
       - name: Build runtime
         run: npm run build:runtime
 
-      - name: Test
+      - name: Test (JS + Rust)
         run: npm run test:all
 
       - name: Assert tag matches package.json
+        if: startsWith(github.ref, 'refs/tags/')
         run: |
           TAG="${GITHUB_REF_NAME#v}"
           PKG=$(node -p "require('./package.json').version")
-          test "$TAG" = "$PKG"
+          echo "Tag version: $TAG"
+          echo "Package version: $PKG"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::Tag $TAG does not match package.json version $PKG"
+            echo "Run 'npm run sync-version' and ensure tag was created from correct commit."
+            exit 1
+          fi
 
+      - name: Validate version sync (tauri.conf.json + Cargo.toml)
+        run: |
+          node scripts/release/version.mjs
+          if ! git diff --quiet -- src-tauri/tauri.conf.json src-tauri/Cargo.toml; then
+            echo "::error::Version files out of sync after sync-version"
+            git diff
+            exit 1
+          fi
+
+  # ─────────────────────────────────────────────────────────
+  # Build Windows artifacts (x86_64 + aarch64)
+  # ─────────────────────────────────────────────────────────
   build:
     name: Build (Windows ${{ matrix.arch }})
     needs: test
+    timeout-minutes: 60
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -58,25 +89,20 @@ jobs:
           - runner: windows-11-arm
             arch: aarch64
             target: aarch64-pc-windows-msvc
+
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - name: Setup
+        uses: ./.github/actions/setup
         with:
-          node-version: "22"
-          cache: npm
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri -> target
-          key: ${{ matrix.arch }}
+          install-rust: "true"
+          rust-targets: ${{ matrix.target }}
+          install-system-deps: "false"
+          cache-key: ${{ matrix.arch }}
 
       - run: npm ci
 
@@ -86,6 +112,18 @@ jobs:
       - name: Build runtime
         run: npm run build:runtime
 
+      - name: Verify secrets present
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          SHAPE_CLOUD_BUILD_SECRET: ${{ secrets.SHAPE_CLOUD_BUILD_SECRET }}
+        run: |
+          if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then echo "::error::TAURI_SIGNING_PRIVATE_KEY missing"; exit 1; fi
+          if [ -z "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" ]; then echo "::error::TAURI_SIGNING_PRIVATE_KEY_PASSWORD missing"; exit 1; fi
+          if [ -z "${SHAPE_CLOUD_BUILD_SECRET:-}" ]; then echo "::error::SHAPE_CLOUD_BUILD_SECRET missing"; exit 1; fi
+          echo "✓ All required secrets present"
+
       # Password-protected key in secrets (upload via node/fs, not PowerShell pipe —
       # UTF-16 piping corrupts the key and surfaces as "Wrong password").
       - name: Build Tauri (NSIS only)
@@ -93,15 +131,9 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # Official Shape Cloud AI attestation (same secret as website SHAPE_CLOUD_BUILD_SECRET).
           SHAPE_CLOUD_BUILD_SECRET: ${{ secrets.SHAPE_CLOUD_BUILD_SECRET }}
-          # Bake production website into Next + Rust (release binaries ignore runtime redirects).
           NEXT_PUBLIC_SHAPE_WEBSITE_URL: https://www.useshape.org
         run: |
-          if [ -z "${SHAPE_CLOUD_BUILD_SECRET:-}" ]; then
-            echo "SHAPE_CLOUD_BUILD_SECRET secret is required for release builds" >&2
-            exit 1
-          fi
           if [ -n "${{ matrix.target }}" ]; then
             npm run tauri -- build --bundles nsis --target "${{ matrix.target }}"
           else
@@ -111,43 +143,77 @@ jobs:
       - name: Prepare release assets
         run: node scripts/release/assets.mjs --arch ${{ matrix.arch }} --out-dir dist/release
 
+      - name: List assets
+        shell: bash
+        run: ls -lh dist/release/
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: windows-${{ matrix.arch }}
           path: dist/release/*
           if-no-files-found: error
+          retention-days: 14
+          compression-level: 6
 
+      # Optional: SBOM generation for supply-chain transparency
+      - name: Generate SBOM (CycloneDX)
+        uses: anchore/sbom-action@v0
+        with:
+          path: dist/release/
+          format: cyclonedx-json
+          output-file: dist/release/sbom-${{ matrix.arch }}.cyclonedx.json
+        continue-on-error: true
+
+      - name: Upload SBOM
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ matrix.arch }}
+          path: dist/release/sbom-${{ matrix.arch }}.cyclonedx.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ─────────────────────────────────────────────────────────
+  # Publish GitHub Release
+  # ─────────────────────────────────────────────────────────
   publish:
-    name: Publish release
+    name: Publish Release
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
 
       - run: npm ci
 
-      - name: Download artifacts
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist/release
           merge-multiple: true
 
-      # GitHub artifact attestations require a public repo or a paid org plan.
-      # Skip them here — updater .sig files still ship with the release.
+      - name: List downloaded assets
+        run: ls -lhR dist/release
 
       - name: Previous tag
         id: prev
         run: |
           PREV=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
           echo "tag=$PREV" >> "$GITHUB_OUTPUT"
+          echo "Previous tag: $PREV"
 
       - name: Detect prerelease
         id: meta
@@ -155,19 +221,30 @@ jobs:
           # Stable tags are vX.Y.Z. Nightly tags are hyphenated (vX.Y.Z-nightly) and publish as GitHub prereleases.
           if [[ "${GITHUB_REF_NAME}" == *-* ]]; then
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "Prerelease detected: ${GITHUB_REF_NAME}"
           else
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "Stable release: ${GITHUB_REF_NAME}"
           fi
 
-      - name: Generate notes
+      - name: Generate release notes
         run: |
           if [ -n "${{ steps.prev.outputs.tag }}" ]; then
             node scripts/release/notes.mjs --from "${{ steps.prev.outputs.tag }}" --to HEAD --output release-notes.md
           else
             node scripts/release/notes.mjs --to HEAD --output release-notes.md
           fi
+          cat release-notes.md
 
-      - name: Publish release
+      # Build provenance attestation (SLSA) - requires public repo, which Shape is.
+      # This gives consumers cryptographic proof of build origin.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "dist/release/*"
+        continue-on-error: true
+
+      - name: Publish release (with retries)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -177,5 +254,12 @@ jobs:
             ARGS+=(--prerelease)
           fi
           # Draft → upload with retries + octet-stream → publish.
-          # softprops dies on intermittent uploads.github.com "Error creating policy".
+          # Custom script handles intermittent uploads.github.com "Error creating policy".
           node scripts/release/upload.mjs "${ARGS[@]}"
+
+      - name: Summary
+        run: |
+          echo "## Release ${{ github.ref_name }} published :rocket:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Artifacts:" >> $GITHUB_STEP_SUMMARY
+          ls -lh dist/release | sed 's/^/- /' >> $GITHUB_STEP_SUMMARY || true
