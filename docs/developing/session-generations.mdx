@@ -1,0 +1,80 @@
+---
+title: Session generations and token rotation
+description: Why in-flight requests get discarded, and the rotation case the counter gets wrong.
+order: 9
+icon: ri-refresh-line
+---
+
+`lib/cloud/store.ts` keeps a module-level `sessionGeneration` counter. Every account load captures it before awaiting, and compares afterwards:
+
+```ts
+const generation = sessionGeneration;
+const account = await fetchAccount(token);
+if (generation !== sessionGeneration) return;
+```
+
+The intent is sound and the pattern is standard. Kafka producer epochs, Raft terms, and connection-pool generations all work the same way. But those systems keep two things separate that this counter conflates, and the difference is where the rotation bug lives.
+
+## A name, and a count of incarnations
+
+A session needs an identity and a version. The identity says *which* session; the version says *which incarnation* of it. A check at a boundary compares the version and rejects work that belongs to an earlier one.
+
+`sessionGeneration` is asked to do both jobs. It moves when the user signs out, when another window signs in as someone else, and when the access token rotates. The first two end a session. The third does not — it is the same user, same account, same session, holding a new token.
+
+So a rotation invalidates a request that was never stale.
+
+## What actually happens on a rotation
+
+1. `applyToken(token-1)` captures `generation`, then calls `fetchAccount`.
+2. The server answers 401. `shapeApiFetch` calls `refreshShapeAccessToken`, which mints `token-2` and calls `saveToken`.
+3. `saveToken` increments `sessionGeneration`.
+4. `shapeApiFetch` retries the same request with `token-2` and gets a good response.
+5. That response returns into step 1's invocation, whose captured `generation` is now out of date, and gets discarded.
+
+The account is then loaded by a second `applyToken` that `broadcastAuthChange()` triggers. Measured: three `/api/account` calls where two would do, and the third is the one that applies. Suppressing the broadcast without replacing that load leaves `creditsRemaining` at the pre-rotation figure (observed 1200 instead of 999).
+
+## Compare credentials, not counters
+
+Two independent codebases hit this and fixed it the same way: record on the request which credentials it was sent with, and treat a 401 as an invalidation signal only while those credentials are still current.
+
+> On a 401, call something like `strategy.invalidate(staleCredentials)`. It clears the cache and bumps the epoch only when the stale credentials are still the current ones. If a newer refresh is cached or in flight, skip the invalidation and just replay, so the replay joins the refresh that is already running.
+
+That is the shape of the fix here. A rotation is not something the waiting request needs to be protected from, because `shapeApiFetch` already retried with the new token. What the request does need protecting from is a *different session* — a sign-out, or a different account. Those are distinguishable without a counter, by asking whether the response belongs to the account still signed in.
+
+A second detail from the same literature: a failure caused by the generation moving is not evidence about the current session. Treating it as one is how a valid session gets cleared.
+
+## What is already right
+
+- **Single-flight refresh.** `refreshInFlight` means concurrent 401s share one refresh. Without it, rotating refresh tokens get replayed and the provider revokes the whole token family. This is the classic bug and Shape does not have it.
+- **Cross-window ordering.** Usage broadcasts carry `origin` and `seq`, so a receiver can drop an older snapshot. The alternative, an `isProcessingUpdate` flag around the send, does not survive reordering.
+- **Identity checks on usage snapshots.** `applyUsageSnapshot` and `applyUsageCheckResult` both reject a payload whose `userId` is not the signed-in account. That is the right instinct, applied to the wrong boundary — the account load needs it too.
+
+## Testing this
+
+The race is only reproducible if the test controls when each request settles. A deferred promise per request, resolved by hand, is the standard approach:
+
+```ts
+let release: () => void;
+const gate = new Promise<void>((r) => { release = r; });
+// fetch mock awaits `gate` before returning
+const pending = refreshShapeAuth();
+await vi.waitFor(() => expect(accountStarted).toBe(true));
+applyUsageCheckResult({ allowed: true, creditsRemaining: 900, tier: "pro" });
+release!();
+await pending;
+```
+
+Two things the existing rotation test does not do, and should:
+
+- It lets `refreshShapeAuth()` and the usage scheduler start `applyToken` concurrently, and the mock only 401s the *first* account call. Which invocation triggers the rotation therefore varies between runs. Any fix must be tested with both orderings forced.
+- It asserts the final balance but not the request count, so it passes whether the account is applied by the retry or by the duplicate load.
+
+A fix here should land with a test that fails on both orderings and asserts two account calls, not three.
+
+## Sources
+
+- Kafka KIP-98 (producer epoch), KIP-588 (`PRODUCER_FENCED` / `INVALID_PRODUCER_EPOCH`); Raft terms; the MongoDB connection-pool generation. Same shape at different layers.
+- Kleppmann, *How to do distributed locking* — fencing tokens, and why a check must happen at the boundary where damage occurs rather than before the await.
+- `radoslavirha/homelab-apps#196` — concurrent 401s each starting their own refresh; the invalidate-only-if-still-current fix.
+- `Glass-Finance/glass-waitlist#160` — keying a refresh memo by session epoch, and not clearing a session on an epoch-change error.
+- RFC 6749 refresh-token rotation, and the reuse detection that revokes a token family on replay.
