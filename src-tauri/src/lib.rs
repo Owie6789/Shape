@@ -177,6 +177,8 @@ pub fn run() {
             commands::ipc::filesystem::mark_file_dirty,
             commands::ipc::filesystem::get_rust_deps,
             commands::ipc::filesystem::set_project_path,
+            commands::ipc::filesystem::set_extra_workspace_folders,
+            commands::ipc::filesystem::grant_ipc_path,
             commands::ipc::filesystem::open_file,
             commands::ipc::filesystem::close_file,
             commands::ipc::filesystem::close_all_files,
@@ -237,6 +239,8 @@ pub fn run() {
             commands::ipc::github_auth::github_actions_workflow_yaml,
             commands::ipc::github_auth::github_actions_workflow_dispatch,
             commands::ipc::device_id::get_device_id,
+            commands::ipc::cloud_auth::cloud_auth_get,
+            commands::ipc::cloud_auth::cloud_auth_set,
             // python
             commands::python::discover_python_interpreters,
             // git

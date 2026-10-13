@@ -564,7 +564,10 @@ export function ChatInput({
     const settings = useSettings();
     const shapeAuth = useShapeAuth();
     const { catalog } = useShapeCatalog();
-    const allModels = resolveChatModels(getCatalogModels());
+    const allModels = React.useMemo(() => {
+        void catalog;
+        return resolveChatModels(getCatalogModels());
+    }, [catalog]);
     const textareaRef = React.useRef<HTMLTextAreaElement>(null);
     const mentionOverlayRef = React.useRef<HTMLDivElement>(null);
     const composerBoxRef = React.useRef<HTMLDivElement>(null);

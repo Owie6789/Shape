@@ -190,6 +190,8 @@ async fn ensure_host() -> Result<(u16, String), String> {
         &format!("--window-size={VIEW_W},{VIEW_H}"),
         "--force-device-scale-factor=1",
         &format!("--remote-debugging-port={port}"),
+        // WP-10: pin the DevTools socket to loopback explicitly.
+        "--remote-debugging-address=127.0.0.1",
         &format!("--user-data-dir={}", data_dir.display()),
         "about:blank",
     ])

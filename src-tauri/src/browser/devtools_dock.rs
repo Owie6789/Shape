@@ -39,9 +39,9 @@ pub async fn inspector_for(want: &str) -> Result<String, String> {
     }
     let page_ws = app_page_ws(&list)?;
     iframe_session_id(&page_ws, want).await?;
-    let port = start_proxy(page_ws, want.to_string()).await?;
+    let (port, token) = start_proxy(page_ws, want.to_string()).await?;
     Ok(format!(
-        "{}/devtools/inspector.html?ws=127.0.0.1:{port}/devtools/page/frame",
+        "{}/devtools/inspector.html?ws=127.0.0.1:{port}/devtools/page/frame/{token}",
         crate::browser::webview_debug::base_url()
     ))
 }
@@ -87,8 +87,9 @@ async fn json_list() -> Result<Vec<Value>, String> {
 }
 
 async fn iframe_session_id(page_ws: &str, want: &str) -> Result<String, String> {
-    let (mut socket, _) = tokio_tungstenite::connect_async(page_ws)
+    let (mut socket, _) = tokio::time::timeout(Duration::from_secs(5), tokio_tungstenite::connect_async(page_ws))
         .await
+        .map_err(|_| RESTART.to_string())?
         .map_err(|_| RESTART.to_string())?;
     let session = wait_iframe(&mut socket, want).await?;
     Ok(session)
@@ -171,12 +172,14 @@ async fn wait_iframe(
     Err(MISS.into())
 }
 
-async fn start_proxy(page_ws: String, want: String) -> Result<u16, String> {
+async fn start_proxy(page_ws: String, want: String) -> Result<(u16, String), String> {
     if let Some(old) = PROXY.lock().unwrap_or_else(|p| p.into_inner()).take() {
         old.task.abort();
     }
     let listener = TcpListener::bind("127.0.0.1:0").await.map_err(|e| e.to_string())?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+    let token = uuid::Uuid::new_v4().simple().to_string();
+    let exp = format!("/devtools/page/frame/{token}");
     let task = tauri::async_runtime::spawn(async move {
         loop {
             let Ok((stream, _)) = listener.accept().await else {
@@ -184,16 +187,18 @@ async fn start_proxy(page_ws: String, want: String) -> Result<u16, String> {
             };
             let page_ws = page_ws.clone();
             let want = want.clone();
+            let exp = exp.clone();
             tauri::async_runtime::spawn(async move {
-                let Ok(frontend) = tokio_tungstenite::accept_async(stream).await else {
-                    return;
-                };
+                let Ok(frontend) = tokio_tungstenite::accept_hdr_async(stream, move |r: &tokio_tungstenite::tungstenite::handshake::server::Request, resp| {
+                    if r.uri().path() != exp || !r.headers().get("Origin").and_then(|v| v.to_str().ok()).map(|o| o == crate::browser::webview_debug::base_url()).unwrap_or(true) { return Err(tokio_tungstenite::tungstenite::http::Response::builder().status(403).body(None).unwrap()); }
+                    Ok(resp)
+                }).await else { return };
                 relay(frontend, page_ws, want).await;
             });
         }
     });
     *PROXY.lock().unwrap_or_else(|p| p.into_inner()) = Some(Proxy { task });
-    Ok(port)
+    Ok((port, token))
 }
 
 async fn relay(
@@ -201,7 +206,7 @@ async fn relay(
     page_ws: String,
     want: String,
 ) {
-    let Ok((mut page, _)) = tokio_tungstenite::connect_async(&page_ws).await else {
+    let Ok(Ok((mut page, _))) = tokio::time::timeout(Duration::from_secs(5), tokio_tungstenite::connect_async(&page_ws)).await else {
         return;
     };
     let Ok(session) = wait_iframe(&mut page, &want).await else {

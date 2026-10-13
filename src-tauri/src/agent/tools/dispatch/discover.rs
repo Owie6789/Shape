@@ -118,7 +118,7 @@ pub(super) async fn tool_visit_url(args: &Value, ctx: &ToolCtx<'_>) -> ToolOutco
         Ok(s) => s,
         Err(e) => return error_outcome("visit_url", &e),
     };
-    let url = match crate::agent::security::urls::validate_outbound_url(&url) {
+    let url = match crate::agent::security::urls::validate_outbound_url_resolved(&url).await {
         Ok(u) => u,
         Err(e) => return error_outcome("visit_url", &e),
     };

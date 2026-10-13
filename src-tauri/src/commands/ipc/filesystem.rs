@@ -118,6 +118,18 @@ pub async fn set_project_path(
 }
 
 #[tauri::command]
+pub fn set_extra_workspace_folders(window: tauri::WebviewWindow, folders: Vec<String>) -> Result<(), AppError> {
+    if window.label() != "main" { return Err(AppError::Message("Denied.".into())); }
+    crate::agent::security::paths::set_ipc_extra_roots(folders)
+}
+
+#[tauri::command]
+pub fn grant_ipc_path(window: tauri::WebviewWindow, path: String) -> Result<(), AppError> {
+    if window.label() != "main" { return Err(AppError::Message("Denied.".into())); }
+    crate::agent::security::paths::grant_ipc_path(&path)
+}
+
+#[tauri::command]
 pub async fn open_file(
     app: AppHandle,
     state: State<'_, AppState>,

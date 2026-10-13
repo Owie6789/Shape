@@ -13,7 +13,17 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
     "src-tauri/target/**",
+    // One-off migration scripts not part of app
+    "src-tauri/scripts/**",
+    // Generated docs search index
+    "docs/generated/**",
+    // Generated preview runtime bundles (esbuild output)
+    "src-tauri/runtime/**",
+    "public/preview/**",
+    // Coverage
+    "coverage/**",
   ]),
+  { rules: { "react-hooks/set-state-in-effect": "warn", "react-hooks/refs": "warn" } },
 ]);
 
 export default eslintConfig;

@@ -131,9 +131,11 @@ const HOST_SCRIPT: &str = r##"
     if (!on) send({ type: "shape-browser-hover" });
   }
   var lastHover = 0;
+  var SHAPE_ORIGINS = ["http://tauri.localhost", "https://tauri.localhost", "http://asset.localhost", "https://asset.localhost", "http://localhost:48921", "http://127.0.0.1:48921"];
   window.addEventListener("message", function (e) {
     var data = e.data;
     if (!data || data.type !== "shape-browser-host") return;
+    if (SHAPE_ORIGINS.indexOf(e.origin) < 0) return;
     if (data.pick != null) applyPick(data.pick);
     if (data.scheme === "light" || data.scheme === "dark" || data.scheme === "system") {
       mode = data.scheme;

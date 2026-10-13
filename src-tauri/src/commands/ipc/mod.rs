@@ -1,3 +1,4 @@
+pub mod cloud_auth;
 pub mod device_id;
 pub mod open;
 pub mod filesystem;

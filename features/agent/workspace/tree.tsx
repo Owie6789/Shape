@@ -5,7 +5,7 @@ import { ChevronRight20Regular } from "@fluentui/react-icons/headless/svg/chevro
 import { Search20Regular } from "@fluentui/react-icons/headless/svg/search";
 
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { commands, type FileEntry } from "@/lib/backend";
 import { Icon } from "@/components/ui/icon";
 import { FileIcon } from "@/components/ui/file-icon";
@@ -53,23 +53,24 @@ function TreeNode({
 }) {
     const [open, setOpen] = useState(false);
     const [children, setChildren] = useState<FileEntry[] | null>(null);
+    const seq = useRef(0), isExpanded = open || Boolean(query.trim() && entry.is_dir);
 
     const load = useCallback(async () => {
         if (!entry.is_dir) return;
-        try {
-            setChildren(sortEntries(await commands.lsDir(entry.path)));
-        } catch {
-            setChildren([]);
-        }
+        const id = ++seq.current;
+        try { const x = sortEntries(await commands.lsDir(entry.path)); if (seq.current === id) setChildren(x); } catch { if (seq.current === id) setChildren([]); }
     }, [entry.is_dir, entry.path]);
 
     useEffect(() => {
-        if (open && children === null) void load();
-    }, [open, children, load]);
+        if (isExpanded && children === null) void load();
+    }, [isExpanded, children, load]);
 
     useEffect(() => {
-        if (query.trim() && entry.is_dir) setOpen(true);
-    }, [query, entry.is_dir]);
+        if (!isExpanded || !entry.is_dir) return;
+        const fn = () => { void load(); };
+        window.addEventListener("shape-files-changed", fn);
+        return () => window.removeEventListener("shape-files-changed", fn);
+    }, [isExpanded, entry.is_dir, load]);
 
     const pad = 8 + depth * 12;
     const mark = gitMark(statusFor(entry.path));
@@ -101,7 +102,7 @@ function TreeNode({
                     style={{ paddingLeft: pad }}
                 >
                     <Icon
-                        icon={open ? ChevronDown20Regular : ChevronRight20Regular}
+                        icon={isExpanded ? ChevronDown20Regular : ChevronRight20Regular}
                         className="icon-sm shrink-0 text-text-muted"
                     />
                     <span className="min-w-0 flex-1 truncate">{entry.name}</span>
@@ -113,7 +114,7 @@ function TreeNode({
                         <ContextMenuItem onClick={copyPath}>Copy Path</ContextMenuItem>
                     </ContextMenuContent>
                 </ContextMenu>
-                {open ? (
+                {isExpanded ? (
                     <div>
                         {visibleChildren?.map((child) => (
                         <TreeNode
@@ -198,6 +199,9 @@ export function FileTree({
         return roots.filter((entry) => entry.is_dir || entry.name.toLowerCase().includes(needle));
     }, [query, roots]);
 
+    const [refreshTick, setRefreshTick] = useState(0);
+    useEffect(() => { const b = () => setRefreshTick((n) => n + 1); window.addEventListener("shape-files-changed", b); return () => window.removeEventListener("shape-files-changed", b); }, []);
+
     useEffect(() => {
         let cancelled = false;
         void (async () => {
@@ -217,7 +221,7 @@ export function FileTree({
         return () => {
             cancelled = true;
         };
-    }, [projectPath]);
+    }, [projectPath, refreshTick]);
 
     useEffect(() => {
         let cancelled = false;
@@ -237,7 +241,7 @@ export function FileTree({
         return () => {
             cancelled = true;
         };
-    }, [projectPath]);
+    }, [projectPath, refreshTick]);
 
     const statusFor = useCallback((path: string) => {
         const key = path.replace(/\\/g, "/").toLowerCase();

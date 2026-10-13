@@ -153,6 +153,7 @@ export function dispatchShortcutAction(label: string, key: string): boolean {
                 });
                 if (typeof selected !== "string") return;
                 const content = await commands.readFile(active);
+                await commands.grantIpcPath(selected).catch(() => undefined);
                 await commands.saveFile(selected, content);
                 await commands.openFile(selected, selected.split(/[\\/]/).pop() || selected);
             })();

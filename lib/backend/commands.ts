@@ -57,10 +57,13 @@ async function invokeCachedGit<T>(cacheKey: string, command: string, args: Recor
     return value;
 }
 
+let fileCacheGen = 0;
+
 export const commands = {
     invalidateFileCache: (path: string) => {
         fileContentCache.delete(path);
     },
+    invalidateAllFileCaches: () => { fileCacheGen += 1; fileContentCache.clear(); gitCache.clear(); },
     getCachedFileContent: (path: string): string | undefined => fileContentCache.get(path),
     lsDir: (path: string) => invokeCommand<FileEntry[]>("ls_dir", { path }),
     createFile: (path: string) => invokeCommand("create_file", { path }),
@@ -72,6 +75,10 @@ export const commands = {
     revealPath: (path: string) => invokeCommand("reveal_path", { path }),
     openInApp: (app: string, path: string) => invokeCommand("open_in_app", { app, path }),
     setProjectPath: (path: string | null) => invokeCommand("set_project_path", { path }),
+    setExtraWorkspaceFolders: (folders: string[]) => invokeCommand("set_extra_workspace_folders", { folders }),
+    grantIpcPath: (path: string) => invokeCommand("grant_ipc_path", { path }),
+    cloudAuthGet: (key: "access" | "refresh") => invokeCommand<string | null>("cloud_auth_get", { key }),
+    cloudAuthSet: (key: "access" | "refresh", value: string | null) => invokeCommand<void>("cloud_auth_set", { key, value }),
     openFile: (path: string, name: string) => invokeCommand("open_file", { path, name }),
     closeFile: (path: string) => invokeCommand("close_file", { path }),
     closeAllFiles: () => invokeCommand("close_all_files"),
@@ -90,14 +97,14 @@ export const commands = {
     readFile: async (path: string) => {
         const cached = fileContentCache.get(path);
         if (cached !== undefined) return cached;
-        const content = await invokeCommand<string>("read_file", { path });
-        rememberFileContent(path, content);
+        const g = fileCacheGen, content = await invokeCommand<string>("read_file", { path });
+        if (g === fileCacheGen) rememberFileContent(path, content);
         return content;
     },
     readFileFromDisk: async (path: string) => {
         fileContentCache.delete(path);
-        const content = await invokeCommand<string>("read_file", { path });
-        rememberFileContent(path, content);
+        const g = fileCacheGen, content = await invokeCommand<string>("read_file", { path });
+        if (g === fileCacheGen) rememberFileContent(path, content);
         return content;
     },
     primeFileCache: (path: string, content: string) => {
@@ -512,6 +519,7 @@ export const commands = {
             pluginApprovals?: Record<string, string>;
             pluginDisabledActions?: Record<string, string[]>;
             pluginAutoAllow?: string[];
+            customSystemPrompt?: string | null;
         },
         reasoningEffort?: string,
         serviceTier?: string | null,
@@ -537,6 +545,7 @@ export const commands = {
             pluginApprovals: executionPolicy?.pluginApprovals ?? null,
             pluginDisabledActions: executionPolicy?.pluginDisabledActions ?? null,
             pluginAutoAllow: executionPolicy?.pluginAutoAllow ?? null,
+            customSystemPrompt: executionPolicy?.customSystemPrompt ?? null,
             reasoningEffort: reasoningEffort ?? null,
             serviceTier: serviceTier ?? null,
             displayMessage: displayMessage ?? null,
@@ -835,7 +844,7 @@ export const commands = {
         invokeCommand<void>("select_design_preview", {
             id,
             skipped: skipped ?? false,
-            ...(conceptId ? { concept_id: conceptId } : {}),
+            ...(conceptId ? { conceptId } : {}),
             ...(tweaks ? { tweaks } : {}),
         }),
     forkConversation: (messageIndex: number) =>

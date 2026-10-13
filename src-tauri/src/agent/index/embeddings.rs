@@ -75,11 +75,8 @@ struct SearchResponse {
 }
 
 pub fn project_key(project_path: &str) -> String {
-    let mut hash: u64 = 5381;
-    for b in project_path.bytes() {
-        hash = hash.wrapping_mul(33).wrapping_add(b as u64);
-    }
-    format!("{:016x}", hash)
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(format!("{}\n{}", crate::core::project_key::normalize_project_path_for_key(project_path), crate::commands::device_id::get_device_id().unwrap_or_default()).as_bytes()))
 }
 
 fn website_base() -> String {

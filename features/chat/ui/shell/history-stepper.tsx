@@ -208,20 +208,17 @@ export function useChatTurnActive(
         };
     }, [scrollRoot, turnCount]);
 
-    const select = useCallback(
-        (index: number) => {
-            const root = scrollRoot.current;
-            if (!root) return;
-            const clamped = Math.max(0, Math.min(turnCount - 1, index));
-            const el = root.querySelector<HTMLElement>(`[data-chat-turn="${clamped}"]`);
-            if (!el) return;
-            lockUntil.current = Date.now() + LOCK_MS;
-            activeRef.current = clamped;
-            setActive(clamped);
-            el.scrollIntoView({ behavior: "smooth", block: "center" });
-        },
-        [scrollRoot, turnCount],
-    );
+    const select = (index: number) => {
+        const root = scrollRoot.current;
+        if (!root) return;
+        const clamped = Math.max(0, Math.min(turnCount - 1, index));
+        const el = root.querySelector<HTMLElement>(`[data-chat-turn="${clamped}"]`);
+        if (!el) return;
+        lockUntil.current = Date.now() + LOCK_MS;
+        activeRef.current = clamped;
+        setActive(clamped);
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+    };
 
     return [active, select];
 }

@@ -283,7 +283,8 @@ fn project_hash(proj_path: &str) -> String {
     use std::hash::{Hash, Hasher};
     let mut hasher = DefaultHasher::new();
     proj_path.hash(&mut hasher);
-    format!("{:x}", hasher.finish())
+    let _ = hasher.finish();
+    crate::core::project_key::stable_project_key(proj_path)
 }
 
 fn stats_path(proj_path: &str) -> PathBuf {
@@ -296,7 +297,9 @@ fn stats_path(proj_path: &str) -> PathBuf {
 }
 
 fn load_store(proj_path: &str) -> ProjectStatsStore {
-    let file = stats_path(proj_path);
+    let mut file = stats_path(proj_path);
+    let legacy = file.with_file_name(format!("{:x}.json", crate::core::project_key::legacy_sip_hash(proj_path)));
+    if !file.exists() && legacy.exists() { file = legacy; }
     if let Ok(content) = std::fs::read_to_string(&file) {
         if let Ok(mut store) = serde_json::from_str::<ProjectStatsStore>(&content) {
             store.project_path = proj_path.to_string();

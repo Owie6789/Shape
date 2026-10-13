@@ -310,16 +310,10 @@ fn start_watcher(app: AppHandle, path: &str) {
                     }
                 } => {
                     delay = None;
-                    let count = pending_for_emit
-                        .lock()
-                        .map(|mut set| {
-                            let n = set.len();
-                            set.clear();
-                            n
-                        })
-                        .unwrap_or(0);
-                    if count > 0 {
-                        let _ = app_clone.emit("shape-files-changed", count);
+                    let changed_paths: Vec<String> = pending_for_emit.lock().map(|mut set| set.drain().collect()).unwrap_or_default();
+                    if !changed_paths.is_empty() {
+                        clear_cache();
+                        let _ = app_clone.emit("shape-files-changed", changed_paths);
                     }
                 }
             }
@@ -448,6 +442,10 @@ pub async fn create_dir(path: String) -> Result<(), AppError> {
 
 pub async fn delete_path(path: String) -> Result<(), AppError> {
     crate::agent::security::paths::assert_ipc_path_allowed(&path)?;
+    let (r, home) = (crate::agent::security::paths::resolve_path_for_confinement(Path::new(&path))?, dirs::home_dir().map(|h| h.canonicalize().unwrap_or(h)));
+    if r.parent().is_none() || home.as_ref().map(|h| r == *h || (cfg!(any(windows, target_os = "macos")) && r.to_string_lossy().eq_ignore_ascii_case(&h.to_string_lossy()))).unwrap_or(false) || crate::agent::security::paths::is_protected_workspace_root(&path) {
+        return Err(AppError::Message("Refusing to delete protected root.".into()));
+    }
     let p = PathBuf::from(path);
     tokio::task::spawn_blocking(move || {
         if p.is_dir() {
@@ -610,16 +608,20 @@ pub async fn copy_path(old_path: String, new_path: String) -> Result<(), AppErro
     let new_p = PathBuf::from(new_path);
     tokio::task::spawn_blocking(move || {
         if old_p.is_dir() {
+            let (old_c, new_c) = (crate::agent::security::paths::resolve_path_for_confinement(&old_p)?, crate::agent::security::paths::resolve_path_for_confinement(&new_p)?);
+            if new_p.starts_with(&old_p) || new_c.starts_with(&old_c) { return Err(AppError::Message("Cannot copy a directory into itself".into())); }
             let mut stack = vec![old_p.clone()];
             while let Some(current) = stack.pop() {
-                let current_new = new_p.join(current.strip_prefix(&old_p).unwrap());
+                let current_new = new_p.join(current.strip_prefix(&old_p).map_err(|e| AppError::Message(e.to_string()))?);
                 if !current_new.exists() {
                     fs::create_dir_all(&current_new).map_err(|e| AppError::Io(e))?;
                 }
                 for entry in fs::read_dir(current).map_err(|e| AppError::Io(e))? {
                     let entry = entry.map_err(|e| AppError::Io(e))?;
+                    let file_type = entry.file_type().map_err(|e| AppError::Io(e))?;
+                    if file_type.is_symlink() { continue; }
                     let path = entry.path();
-                    if path.is_dir() {
+                    if file_type.is_dir() {
                         stack.push(path);
                     } else {
                         let target = current_new.join(entry.file_name());
@@ -639,6 +641,7 @@ pub async fn copy_path(old_path: String, new_path: String) -> Result<(), AppErro
 }
 
 pub async fn reveal_path(path: String) -> Result<(), AppError> {
+    crate::agent::security::paths::assert_ipc_path_allowed(&path)?;
     tokio::task::spawn_blocking(move || {
         #[cfg(target_os = "windows")]
         {
@@ -719,9 +722,13 @@ fn windows_gui_exe(name: &str) -> String {
     name.to_string()
 }
 
+const ALLOWED_OPEN_IN_APPS: &[&str] = &["explorer", "cursor", "vscode", "code", "zed", "windsurf", "subl", "idea", "webstorm", "pycharm", "goland", "rider", "fleet", "studio", "trae", "antigravity", "lapce", "emacs", "vim", "nvim", "hx"];
+
 pub async fn open_in_app(app: String, path: String) -> Result<(), AppError> {
+    crate::agent::security::paths::assert_ipc_path_allowed(&path)?;
     tokio::task::spawn_blocking(move || {
         let key = app.to_lowercase();
+        if !ALLOWED_OPEN_IN_APPS.contains(&key.as_str()) { return Err(AppError::Message(format!("Unknown editor '{app}'."))); }
         if key == "explorer" {
             #[cfg(target_os = "windows")]
             {
@@ -893,6 +900,7 @@ pub async fn set_project_path(
 
     let changed = {
         let mut state = state.0.lock()?;
+        crate::agent::security::paths::set_ipc_project_root(path.as_deref());
         let current = state.project_path.as_deref().map(normalize);
         let next = path.clone();
         let same = match (&current, &next) {
@@ -951,6 +959,7 @@ pub async fn open_file(
     // Virtual editor tabs (settings / subagent / design preview) are not real files.
     let is_virtual = path.starts_with("shape://");
     if !is_virtual {
+        crate::agent::security::paths::assert_ipc_path_allowed(&path)?;
         // Refuse to open missing paths as tabs (avoids broken "file not found" panes).
         let meta = std::fs::metadata(&path).map_err(|_| {
             AppError::Message(format!("File not found: {}", path))
@@ -1048,6 +1057,7 @@ pub async fn reorder_files(
 }
 
 pub async fn get_rust_deps(project_path: String) -> Result<Vec<(String, String)>, AppError> {
+    crate::agent::security::paths::assert_ipc_path_allowed(&project_path)?;
     tokio::task::spawn_blocking(move || {
         let cargo_path = format!("{}/Cargo.toml", project_path);
         if !std::path::Path::new(&cargo_path).exists() {

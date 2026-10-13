@@ -51,8 +51,11 @@ export const PREVIEW_INITIALIZATION_SCRIPT = `(function () {
   };
 })();`;
 
+const TWEAK_LISTENER_JS = `try{window.addEventListener("message",(e)=>{const d=e&&e.data,t=d&&d.tweaks,r=document.getElementById("root")||(document.body&&document.body.firstElementChild);if(!d||d.type!=="shape-preview-tweaks"||!t||!r||!r.style)return;for(const[k,p]of[["radius","borderRadius"],["padding","padding"],["gap","gap"]])if(typeof t[k]==="number")r.style[p]=t[k]+"px";if(r.firstElementChild&&r.firstElementChild.style&&typeof t.radius==="number")r.firstElementChild.style.borderRadius=t.radius+"px";});}catch(_){}`;
+
 export function buildPreviewReadyScript(): string {
     return `(async () => {
+  ${TWEAK_LISTENER_JS}
   try {
     if (document.fonts && document.fonts.ready) await document.fonts.ready;
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
@@ -70,6 +73,7 @@ export function buildPreviewReadyScript(): string {
   }
 })();`;
 }
+export const previewFrameSandbox = (_hasSrcDoc?: boolean) => "allow-scripts";
 
 export const PREVIEW_BUNDLE_FILENAME = "bundle.js";
 export const PREVIEW_TAILWIND_FILENAME = "tailwind-browser.js";
@@ -110,6 +114,7 @@ export function buildReactSandboxHtml(
   <script src="${bundleSrcAttr}"></script>
   <script>
     (async () => {
+      ${TWEAK_LISTENER_JS}
       try {
         if (typeof ShapePreviewRuntime === "undefined" || !ShapePreviewRuntime.mountPreview) {
           throw new Error("Preview runtime failed to load from ${bundleSrcAttr}");

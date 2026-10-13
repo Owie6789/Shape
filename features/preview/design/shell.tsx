@@ -1088,6 +1088,7 @@ export function DesignStudio({
             filters: [{ name: ext.toUpperCase(), extensions: [ext] }],
         });
         if (typeof path !== "string") return;
+        await commands.grantIpcPath(path).catch(() => undefined);
         await commands.saveFileBytes(path, Array.from(bytes));
     }, []);
 

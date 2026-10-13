@@ -612,7 +612,6 @@ export function CommandPalette() {
 
     // Group for section headers when query empty in browse
     const showSections = browse && !query.trim();
-    let lastSection = "";
 
     return (
         <Dialog.Root open={open} onOpenChange={handleOpenChange}>
@@ -657,8 +656,8 @@ export function CommandPalette() {
                         )}
                         {filtered.map((action, idx) => {
                             const section = showSections ? action.section : undefined;
-                            const showHeader = Boolean(section && section !== lastSection);
-                            if (section) lastSection = section;
+                            const prevSection = showSections && idx > 0 ? filtered[idx - 1]?.section : undefined;
+                            const showHeader = Boolean(section && section !== prevSection);
                             return (
                                 <React.Fragment key={action.id}>
                                     {showHeader ? (

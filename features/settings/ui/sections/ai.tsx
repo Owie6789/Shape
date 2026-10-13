@@ -127,8 +127,8 @@ export function AiSettingsPanel({
     page: "models" | "rules" | "workflows" | "context" | "subagents";
 }) {
     const a = settings.ai;
-    useShapeCatalog();
-    const allModels = resolveChatModels(getCatalogModels());
+    const { catalog } = useShapeCatalog();
+    const allModels = React.useMemo(() => { void catalog; return resolveChatModels(getCatalogModels()); }, [catalog]);
     const unavailableHint =
         "This model is not available on your plan.";
     const [showAllModels, setShowAllModels] = React.useState(false);

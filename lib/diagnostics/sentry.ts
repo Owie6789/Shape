@@ -11,8 +11,17 @@ function tracesSampler(ctx: { name?: string; inheritOrSampleWith: (rate: number)
   return ctx.inheritOrSampleWith(process.env.NODE_ENV === "production" ? 0.15 : 0.05);
 }
 
+function telemetryOptedIn(): boolean {
+  try { return (JSON.parse(localStorage.getItem("shape-settings-v1") ?? "") as { privacy?: { telemetryEnabled?: boolean } })?.privacy?.telemetryEnabled === true; } catch { return false; }
+}
+let sentrySub = false, sentryOn = false;
+
 export function initDesktopSentry() {
   if (!dsn || typeof window === "undefined") return;
+  if (!sentrySub) { sentrySub = true; window.addEventListener("shape-settings-changed", initDesktopSentry); window.addEventListener("storage", (e) => { if (!e.key || e.key === "shape-settings-v1") initDesktopSentry(); }); }
+  if (!telemetryOptedIn()) { if (sentryOn) { sentryOn = false; void Sentry.close(1000); } return; }
+  if (sentryOn) return;
+  sentryOn = true;
   const production = process.env.NODE_ENV === "production";
   Sentry.init({
     dsn,
@@ -36,6 +45,7 @@ export function initDesktopSentry() {
     ],
     ignoreErrors: ["ResizeObserver loop", "AbortError", "Failed to fetch"],
     beforeSend(event) {
+      if (!telemetryOptedIn()) return null;
       event.tags = { ...event.tags, source: "desktop" };
       return sentryBeforeSend(event);
     },

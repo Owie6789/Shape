@@ -8,12 +8,12 @@ use super::logging;
 pub fn now_f64() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_default()
         .as_secs_f64()
 }
 
 pub fn normalize_project_path(path: &str) -> String {
-    path.replace('\\', "/").trim_end_matches('/').to_lowercase()
+    crate::core::project_key::normalize_project_path_for_key(path)
 }
 
 pub fn project_paths_equal(a: &Option<String>, b: &Option<String>) -> bool {
@@ -29,18 +29,20 @@ pub fn get_chat_history_path(proj_path: &str) -> std::path::PathBuf {
     use std::hash::{Hash, Hasher};
     let mut hasher = DefaultHasher::new();
     proj_path.hash(&mut hasher);
-    let hash = hasher.finish();
+    let _ = hasher.finish();
 
     let mut path = dirs::data_local_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
     path.push("Shape");
     path.push("chat_history");
     let _ = std::fs::create_dir_all(&path);
-    path.push(format!("{:x}.json", hash));
+    path.push(format!("{}.json", crate::core::project_key::stable_project_key(&normalize_project_path(proj_path))));
     path
 }
 
 pub fn load_conversations(proj_path: &str) -> Vec<Conversation> {
     let file_path = get_chat_history_path(proj_path);
+    let l = file_path.with_file_name(format!("{:x}.json", crate::core::project_key::legacy_sip_hash(proj_path)));
+    let file_path = if !file_path.exists() && l.exists() { l } else { file_path };
     logging::debug("history", &format!("Loading conversations from {:?}", file_path));
     if let Ok(content) = std::fs::read_to_string(&file_path) {
         if let Ok(convs) = serde_json::from_str(&content) {

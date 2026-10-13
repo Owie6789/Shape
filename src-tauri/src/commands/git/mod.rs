@@ -649,10 +649,7 @@ pub fn git_commit(repo_path: String, message: String) -> Result<(), AppError> {
         })?;
 
         let parent_commit = match repo.head() {
-            Ok(head) => {
-                let target = head.target().unwrap();
-                Some(repo.find_commit(target).map_err(|e| AppError::Git(e))?)
-            }
+            Ok(head) => head.target().map(|t| repo.find_commit(t).map_err(AppError::Git)).transpose()?,
             Err(_) => None,
         };
 
@@ -1042,14 +1039,13 @@ pub fn git_switch_branch(repo_path: String, branch_name: String) -> Result<(), A
     let (object, reference) = repo
         .revparse_ext(&branch_name)
         .map_err(|e| AppError::Git(e))?;
+    let ref_name = reference.as_ref().map(|r| r.name().ok_or_else(|| AppError::Message("Invalid non-UTF-8 git reference name".into())).map(str::to_string)).transpose()?;
 
     repo.checkout_tree(&object, None)
         .map_err(checkout_conflict_err)?;
 
-    match reference {
-        Some(ref r) => repo
-            .set_head(r.name().unwrap())
-            .map_err(|e| AppError::Git(e))?,
+    match ref_name {
+        Some(ref name) => repo.set_head(name).map_err(|e| AppError::Git(e))?,
         None => repo
             .set_head_detached(object.id())
             .map_err(|e| AppError::Git(e))?,

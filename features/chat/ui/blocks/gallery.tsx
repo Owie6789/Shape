@@ -24,7 +24,9 @@ import {
 } from "@/lib/agent-preview/store";
 import {
     buildBodyPreviewHtml,
+    buildPreviewReadyScript,
     buildReactSandboxHtml,
+    previewFrameSandbox,
 } from "@/lib/agent-preview/sandbox";
 
 export type DesignPreviewItem = {
@@ -63,7 +65,7 @@ function previewSrcDoc(item: DesignPreviewItem): string | null {
         item.kind === "react"
         || /function\s+App\b|const\s+App\b/.test(source);
     if (looksReact) return buildReactSandboxHtml(source, urls);
-    if (/^\s*<(!doctype|html[\s>])/i.test(source)) return source;
+    if (/^\s*<(!doctype|html[\s>])/i.test(source)) { const t = `<script>${buildPreviewReadyScript()}</script>`; return /<\/body>/i.test(source) ? source.replace(/<\/body>/i, `${t}</body>`) : `${source}${t}`; }
     return buildBodyPreviewHtml(source, "", { tailwindSrc: urls.tailwindSrc });
 }
 
@@ -81,6 +83,7 @@ function applyLiveTweaks(
     iframe: HTMLIFrameElement | null,
     tweaks: { radius: number; padding: number; gap: number },
 ) {
+    try { iframe?.contentWindow?.postMessage({ type: "shape-preview-tweaks", tweaks }, "*"); } catch {}
     try {
         const doc = iframe?.contentDocument;
         const root = doc?.getElementById("root") ?? doc?.body?.firstElementChild;
@@ -172,6 +175,16 @@ export function DesignPreviewGallery({
         setFrameReady(false);
     }, [index, items]);
 
+    useEffect(() => {
+        const fn = (e: MessageEvent) => {
+            if ((e.data as { type?: string } | null)?.type === "shape-preview-ready" && e.source && (e.source === iframeRef.current?.contentWindow || e.source === dialogIframeRef.current?.contentWindow)) {
+                setFrameReady(true); applyLiveTweaks(e.source === dialogIframeRef.current?.contentWindow ? dialogIframeRef.current : iframeRef.current, tweaks);
+            }
+        };
+        window.addEventListener("message", fn);
+        return () => window.removeEventListener("message", fn);
+    }, [tweaks]);
+
     const item = items[index];
     if (!item) return null;
 
@@ -216,7 +229,7 @@ export function DesignPreviewGallery({
                     srcDoc={srcDoc || undefined}
                     src={srcDoc ? undefined : src}
                     className={cn(className, !frameReady && "opacity-0")}
-                    sandbox="allow-scripts allow-same-origin"
+                    sandbox={previewFrameSandbox(Boolean(srcDoc))}
                     onLoad={() => onFrameReady(ref)}
                 />
             </div>

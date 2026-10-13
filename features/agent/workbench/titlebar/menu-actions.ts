@@ -1,7 +1,7 @@
 import { commands } from "@/lib/backend";
 import { HELP_LINKS } from "@/lib/errors/help-links";
 import { isPopoutPath } from "@/lib/window/tauri-window";
-import { notifyWorkspaceClosed, notifyWorkspaceOpened } from "@/lib/workspace/trust";
+import { ensureWorkspaceTrust, notifyWorkspaceClosed, notifyWorkspaceOpened } from "@/lib/workspace/trust";
 import { clearExtraWorkspaceFolders } from "@/lib/workspace/folders";
 import type { MenuActionContext } from "./types";
 import { getFileExtension, isImageExtension, isFontExtension } from "@/features/editor/lib/image-types";
@@ -65,10 +65,12 @@ export function createMenuActionHandler(ctx: MenuActionContext) {
                 if (typeof selected === "string") {
                     const selectedDir = getDirectoryName(selected);
                     if (!ctx.projectPath && selectedDir) {
-                        clearExtraWorkspaceFolders();
                         await commands.setProjectPath(selectedDir);
+                        await clearExtraWorkspaceFolders();
+                        await ensureWorkspaceTrust(selectedDir);
                         notifyWorkspaceOpened(selectedDir);
                     }
+                    await commands.grantIpcPath(selected).catch(() => undefined);
                     await commands.openFile(selected, getFileName(selected));
                 }
                 break;
@@ -121,6 +123,7 @@ export function createMenuActionHandler(ctx: MenuActionContext) {
                 });
                 if (typeof selected === "string") {
                     const content = await ctx.readLatestContent(ctx.activeFile);
+                    await commands.grantIpcPath(selected).catch(() => undefined);
                     await commands.saveFile(selected, content);
                     await commands.openFile(selected, getFileName(selected));
                 }

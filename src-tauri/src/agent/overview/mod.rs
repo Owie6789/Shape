@@ -47,14 +47,11 @@ struct AreaDigest {
 }
 
 fn storage_dir(project_path: &str) -> PathBuf {
-    let mut hash: u64 = 5381;
-    for b in project_path.bytes() {
-        hash = hash.wrapping_mul(33).wrapping_add(b as u64);
-    }
+    let hash = crate::core::project_key::shape_index_key(project_path);
     dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("shape-index")
-        .join(format!("{:016x}", hash))
+        .join(hash)
 }
 
 fn store_path(project_path: &str) -> PathBuf {

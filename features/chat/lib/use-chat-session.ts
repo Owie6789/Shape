@@ -196,9 +196,12 @@ export function useChatSession() {
     const [selectedMode, setSelectedMode] = React.useState("Code");
     const selectedModeRef = React.useRef(selectedMode);
     selectedModeRef.current = selectedMode;
-    const [reasoningEffort, setReasoningEffort] = React.useState<"low" | "high" | "ultra" | "max">(
+    const [reasoningEffort, setReasoningEffortState] = React.useState<ComposerEffort>(
         () => readComposerPrefs().effort || "low",
     );
+    const setReasoningEffort = React.useCallback((effort: ComposerEffort) => {
+        setReasoningEffortState(effort);
+    }, []);
     const [fastMode, setFastMode] = React.useState(() => readComposerPrefs().fast ?? true);
     const tabsHydratedForRef = React.useRef<string | null>(null);
 
@@ -1015,6 +1018,7 @@ export function useChatSession() {
                     pluginApprovals: settings.ai.pluginApprovals,
                     pluginDisabledActions: settings.ai.pluginDisabledActions,
                     pluginAutoAllow,
+                    customSystemPrompt: settings.ai.customSystemPrompt,
                 },
                 reasoningEffort,
                 priorityTierForCredits(shapeAuth.creditsRemaining, shapeAuth.creditsIncluded),

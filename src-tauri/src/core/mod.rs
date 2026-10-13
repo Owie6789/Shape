@@ -1,5 +1,6 @@
 pub mod build_attestation;
 pub mod error;
+pub mod project_key;
 pub mod git_bin;
 pub mod mic;
 pub mod paths;

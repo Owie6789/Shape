@@ -69,7 +69,7 @@ function ProjectOpenHost() {
                 if (fresh || cancelled) return;
                 const last = loadLastProject();
                 if (!last || cancelled) return;
-                await openProject(last);
+                await openProject(last, { promptTrust: false });
             } catch {
                 /* ignore */
             }
@@ -94,6 +94,7 @@ export default function Main({ children }: { children: React.ReactNode }) {
             const selected = await open({ directory: false, multiple: false });
             if (typeof selected === "string") {
                 const name = selected.split(/[\\/]/).pop() || selected;
+                await commands.grantIpcPath(selected).catch(() => undefined);
                 await commands.openFile(selected, name);
             }
         };

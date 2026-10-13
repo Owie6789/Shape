@@ -172,6 +172,12 @@ pub async fn tool_browse(args: &Value, ctx: &ToolCtx<'_>) -> ToolOutcome {
         Ok(ws) => ws,
         Err(err) => return fail(&format!("DevTools is not ready: {err}")),
     };
+    let mut blocked: Vec<String> = ["file:*", "*://localhost*", "*://*.localhost*", "*://127.*", "*://10.*", "*://169.254.*", "*://192.168.*", "*://0.0.0.0*", "*://[::1]*", "*://[fe80:*", "*://[fc*", "*://[fd*", "*://metadata*", "*://*.internal*", "*://*.local*"].into_iter().map(String::from).collect();
+    for b in 16..=31 { blocked.push(format!("*://172.{b}.*")); }
+    for b in 64..=127 { blocked.push(format!("*://100.{b}.*")); }
+    if action != "open" {
+        if let Err(e) = drive_all(&ws, vec![("Network.enable", json!({})), ("Network.setBlockedURLs", json!({ "urls": blocked.clone() }))]).await { return fail(&e); }
+    }
 
     let mut cursor_x = args.get("x").and_then(|v| v.as_f64()).unwrap_or(50.0).clamp(0.0, 100.0);
     let mut cursor_y = args.get("y").and_then(|v| v.as_f64()).unwrap_or(50.0).clamp(0.0, 100.0);
@@ -182,7 +188,7 @@ pub async fn tool_browse(args: &Value, ctx: &ToolCtx<'_>) -> ToolOutcome {
     let act_result = match action.as_str() {
         "open" => {
             let url = match args.get("url").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()) {
-                Some(u) => match crate::agent::security::urls::validate_outbound_url(u) {
+                Some(u) => match crate::agent::security::urls::validate_outbound_url_resolved(u).await {
                     Ok(url) => url,
                     Err(err) => return fail(&err),
                 },
@@ -199,8 +205,8 @@ pub async fn tool_browse(args: &Value, ctx: &ToolCtx<'_>) -> ToolOutcome {
                     "image": ""
                 }),
             );
-            match drive(&ws, "Page.navigate", json!({ "url": url })).await {
-                Ok(v) => match v.get("errorText").and_then(|e| e.as_str()).filter(|s| !s.is_empty()) {
+            match drive_all(&ws, vec![("Network.enable", json!({})), ("Network.setBlockedURLs", json!({ "urls": blocked })), ("Page.navigate", json!({ "url": url }))]).await {
+                Ok(v) => match v.last().and_then(|x| x.get("errorText")).and_then(|e| e.as_str()).filter(|s| !s.is_empty()) {
                     Some(err) => Err(err.to_string()),
                     None => Ok(format!("Opened {url}")),
                 },
@@ -291,6 +297,9 @@ pub async fn tool_browse(args: &Value, ctx: &ToolCtx<'_>) -> ToolOutcome {
     let snap_v: Value = serde_json::from_str(&snap).unwrap_or(json!({}));
     let title = snap_v.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let href = snap_v.get("href").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    if !href.is_empty() && href != "about:blank" {
+        if let Err(err) = crate::agent::security::urls::validate_outbound_url_resolved(&href).await { let _ = drive(&ws, "Page.navigate", json!({ "url": "about:blank" })).await; return fail(&format!("Blocked redirect ({href}): {err}")); }
+    }
     let failed = snap_v.get("failed").and_then(|v| v.as_bool()).unwrap_or(false);
     if failed || page_failed(&href, &title) {
         return page_error(ctx, if href.is_empty() { args.get("url").and_then(|v| v.as_str()).unwrap_or("") } else { href.as_str() }, "This site can't be reached.");
@@ -670,6 +679,7 @@ async fn ensure_session() -> Result<(), String> {
     let port = free_port().ok_or_else(|| "Could not find a free debug port.".to_string())?;
     let data_dir = std::env::temp_dir().join(format!("shape-browse-{port}"));
     let _ = std::fs::create_dir_all(&data_dir);
+    let proxy_port = crate::agent::security::urls::ensure_browse_proxy().await?;
     let mut cmd = Command::new(&browser);
     cmd.args([
         "--headless=new",
@@ -678,6 +688,8 @@ async fn ensure_session() -> Result<(), String> {
         "--disable-extensions",
         "--disable-background-networking",
         "--hide-scrollbars",
+        &format!("--proxy-server=http://127.0.0.1:{proxy_port}"),
+        "--proxy-bypass-list=<-loopback>",
         &format!("--window-size={0},{1}", VIEW_W as u32, VIEW_H as u32),
         "--force-device-scale-factor=1",
         &format!("--remote-debugging-port={port}"),

@@ -135,7 +135,7 @@ function savePendingOAuth(oauthState: string, codeVerifier: string) {
       codeVerifier,
       startedAt: Date.now(),
     };
-    localStorage.setItem(PENDING_OAUTH_KEY, JSON.stringify(payload));
+    sessionStorage.setItem(PENDING_OAUTH_KEY, JSON.stringify(payload));
   } catch {
     /* ignore */
   }
@@ -143,7 +143,7 @@ function savePendingOAuth(oauthState: string, codeVerifier: string) {
 
 function clearPendingOAuth() {
   try {
-    localStorage.removeItem(PENDING_OAUTH_KEY);
+    sessionStorage.removeItem(PENDING_OAUTH_KEY);
   } catch {
     /* ignore */
   }
@@ -151,7 +151,7 @@ function clearPendingOAuth() {
 
 function loadPendingOAuth(): PendingOAuth | null {
   try {
-    const raw = localStorage.getItem(PENDING_OAUTH_KEY);
+    const raw = sessionStorage.getItem(PENDING_OAUTH_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as PendingOAuth;
     if (!parsed?.state || !parsed?.codeVerifier || typeof parsed.startedAt !== "number") {
@@ -194,13 +194,15 @@ async function createPkcePair() {
   return { verifier, challenge };
 }
 
-async function loadToken(): Promise<string | null> {
-  try {
-    return localStorage.getItem(STORAGE_KEY);
-  } catch {
-    return null;
-  }
+async function secureLoad(k: "access" | "refresh", lk: string): Promise<string | null> {
+  try { const v = await commands.cloudAuthGet(k); if (v) return v; } catch { try { return localStorage.getItem(lk); } catch { return null; } }
+  try { const l = localStorage.getItem(lk); if (l) { try { await commands.cloudAuthSet(k, l); localStorage.removeItem(lk); } catch {} return l; } } catch {}
+  return null;
 }
+async function secureSave(k: "access" | "refresh", lk: string, t: string | null): Promise<void> {
+  try { await commands.cloudAuthSet(k, t); localStorage.removeItem(lk); } catch { if (!t) try { localStorage.removeItem(lk); } catch {} }
+}
+const loadToken = () => secureLoad("access", STORAGE_KEY);
 
 function loadCachedProfile(): CachedProfile | null {
   try {
@@ -248,56 +250,32 @@ function applyCachedProfile(token: string, profile: CachedProfile) {
 }
 
 async function saveToken(token: string | null) {
-  try {
-    if (token) localStorage.setItem(STORAGE_KEY, token);
-    else localStorage.removeItem(STORAGE_KEY);
-  } catch {
-    /* ignore */
-  }
+  await secureSave("access", STORAGE_KEY, token);
   broadcastAuthChange();
 }
 
-function loadRefresh(): string | null {
-  try {
-    return localStorage.getItem(REFRESH_KEY);
-  } catch {
-    return null;
-  }
-}
+const loadRefresh = () => secureLoad("refresh", REFRESH_KEY);
+const saveRefresh = (t: string | null) => secureSave("refresh", REFRESH_KEY, t);
 
-function saveRefresh(token: string | null) {
-  try {
-    if (token) localStorage.setItem(REFRESH_KEY, token);
-    else localStorage.removeItem(REFRESH_KEY);
-  } catch {
-    /* ignore */
-  }
-}
+let authEpoch = 0;
 
 /** Rotate the access token using the stored refresh token. Returns the new access token. */
 export async function refreshShapeAccessToken(): Promise<string | null> {
   if (refreshInFlight) return refreshInFlight;
-  refreshInFlight = (async () => {
-    const refresh = loadRefresh();
-    if (!refresh) return null;
+  const e = authEpoch, p = (async () => {
+    const rf = await loadRefresh();
+    if (!rf || e !== authEpoch) return null;
     try {
-      const result = await refreshAccessToken(refresh);
-      await saveToken(result.accessToken);
-      saveRefresh(result.refreshToken ?? refresh);
-      setState({
-        accessToken: result.accessToken,
-        loggedIn: true,
-        error: null,
-        offline: false,
-      });
-      return result.accessToken;
-    } catch {
-      return null;
-    }
-  })().finally(() => {
-    refreshInFlight = null;
-  });
-  return refreshInFlight;
+      const r = await refreshAccessToken(rf);
+      if (e !== authEpoch) return null;
+      const nr = r.refreshToken ?? rf;
+      await saveToken(r.accessToken); await saveRefresh(nr);
+      if (e !== authEpoch) { const [ca, cr] = await Promise.all([loadToken(), loadRefresh()]); if (ca === r.accessToken) await saveToken(null); if (cr === nr) await saveRefresh(null); return null; }
+      setState({ accessToken: r.accessToken, loggedIn: true, error: null, offline: false });
+      return r.accessToken;
+    } catch { return null; }
+  })().finally(() => { if (refreshInFlight === p) refreshInFlight = null; });
+  return (refreshInFlight = p);
 }
 
 function broadcastAuthChange() {
@@ -315,7 +293,7 @@ function setupAuthSync() {
 
   window.addEventListener("storage", (e) => {
     if (e.key === STORAGE_KEY) {
-      void applyToken(e.newValue);
+      void loadToken().then((t) => { if (t !== state.accessToken) void applyToken(t); });
     }
   });
 
@@ -358,7 +336,7 @@ async function applyToken(token: string | null, allowRefresh = true) {
   if (!token) {
     clearShapeCatalog();
     saveCachedProfile(null);
-    saveRefresh(null);
+    await saveRefresh(null);
     setState({
       ...DEFAULT_STATE,
       isLoading: false,
@@ -435,7 +413,7 @@ async function applyToken(token: string | null, allowRefresh = true) {
         }
       }
       await saveToken(null);
-      saveRefresh(null);
+      await saveRefresh(null);
       saveCachedProfile(null);
       clearShapeCatalog();
       setState({
@@ -486,7 +464,7 @@ async function finishOAuth(code: string) {
     const result = await exchangeOAuthCode(code, REDIRECT_URI, pendingCodeVerifier ?? undefined);
     finishedOAuthCode = code;
     await saveToken(result.accessToken);
-    saveRefresh(result.refreshToken ?? null);
+    await saveRefresh(result.refreshToken ?? null);
     pendingState = null;
     pendingCodeVerifier = null;
     clearPendingOAuth();
@@ -702,6 +680,8 @@ export function cancelLoginShape() {
 }
 
 export async function logoutShape() {
+  authEpoch += 1;
+  refreshInFlight = null;
   clearLoginPoll();
   pendingState = null;
   pendingCodeVerifier = null;
@@ -716,7 +696,7 @@ export async function logoutShape() {
     }
   }
   await saveToken(null);
-  saveRefresh(null);
+  await saveRefresh(null);
   saveCachedProfile(null);
   clearShapeCatalog();
   setState({ ...DEFAULT_STATE, isLoading: false });
@@ -745,8 +725,10 @@ export async function refreshShapeAuth() {
 
 /** Call when an API response indicates the session is no longer valid. */
 export async function handleAuthFailure() {
+  authEpoch += 1;
+  refreshInFlight = null;
   await saveToken(null);
-  saveRefresh(null);
+  await saveRefresh(null);
   saveCachedProfile(null);
   clearShapeCatalog();
   setState({

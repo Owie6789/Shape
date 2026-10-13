@@ -969,6 +969,10 @@ export function BrowserView({
         const onMessage = (event: MessageEvent) => {
             const frame = frameRef.current;
             if (!frame || event.source !== frame.contentWindow) return;
+            try {
+                const expected = new URL(currentUrlRef.current).origin;
+                if (event.origin && expected !== "null" && event.origin !== expected) return;
+            } catch { /* ignore */ }
             const data = event.data as {
                 type?: string;
                 url?: string;

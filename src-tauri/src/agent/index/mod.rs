@@ -297,7 +297,7 @@ impl IndexManager {
 
         self.manifest.files = current_files;
         self.manifest.last_indexed_at =
-            Some(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64());
+            Some(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs_f64() * 1000.0);
 
         self.persist()?;
         Ok(self.status(false))
@@ -368,14 +368,11 @@ impl IndexManager {
 }
 
 fn index_storage_dir(project_path: &str) -> PathBuf {
-    let mut hash: u64 = 5381;
-    for b in project_path.bytes() {
-        hash = hash.wrapping_mul(33).wrapping_add(b as u64);
-    }
+    let hash = crate::core::project_key::shape_index_key(project_path);
     dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("shape-index")
-        .join(format!("{:016x}", hash))
+        .join(hash)
 }
 
 fn should_skip_entry(path: &Path, project_root: &Path) -> bool {

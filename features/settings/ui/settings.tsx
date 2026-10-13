@@ -39,6 +39,7 @@ import { AiSettingsPanel } from "./sections/ai";
 import { AccountSettingsPanel } from "./sections/account";
 import { applyTelemetryPreference } from "@/lib/telemetry";
 import { clearRepoHistory } from "@/lib/workspace/repo-history";
+import { isWorkspaceTrusted, listTrustedWorkspaces, trustWorkspace, untrustWorkspace } from "@/lib/workspace/trust";
 import { SHAPE_API_BASE } from "@/lib/cloud/api";
 import {
     checkForAppUpdates,
@@ -800,6 +801,7 @@ function PrivacySettings({ settings, part }: { settings: ShapeSettings; part: "n
                     />
                 </SettingRow>
             </SettingSection>
+            <TrustedWorkspacesSection />
             <FeedbackSection />
             <SettingSection title="Legal">
                 <SettingCard>
@@ -823,6 +825,18 @@ function PrivacySettings({ settings, part }: { settings: ShapeSettings; part: "n
             </SettingSection>
         </>
     );
+}
+
+function TrustedWorkspacesSection() {
+    const { project_path: p } = useProjectState();
+    const [trusted, setTrusted] = useState<string[]>(() => listTrustedWorkspaces());
+    const r = () => setTrusted(listTrustedWorkspaces());
+    useEffect(() => {
+        const evs = ["shape-workspace-trusted", "shape-workspace-untrusted", "shape-workspace-opened", "storage"];
+        evs.forEach((e) => window.addEventListener(e, r));
+        return () => evs.forEach((e) => window.removeEventListener(e, r));
+    }, []);
+    return <SettingSection title="Workspace Trust">{p ? <SettingRow title="Current workspace" description={p}><SettingSwitch checked={isWorkspaceTrusted(p)} onChange={(v) => { (v ? trustWorkspace : untrustWorkspace)(p); r(); }} /></SettingRow> : null}<SettingCard>{trusted.length === 0 ? <div className="px-3.5 py-2.5 text-sm text-text-muted">No trusted workspaces.</div> : trusted.map((w) => <SettingRow key={w} title={w}><Button variant="outline" size="sm" onClick={() => { untrustWorkspace(w); r(); }}>Revoke</Button></SettingRow>)}</SettingCard></SettingSection>;
 }
 
 function FeedbackSection() {
