@@ -286,6 +286,8 @@ export function useChatSession(
     const shapeAuth = useShapeAuth();
     const { catalog } = useShapeCatalog();
     const [tabsReady, setTabsReady] = React.useState(false);
+    // The project the tabs were last hydrated for. `undefined` only before the first run.
+    const hydratedProjectRef = React.useRef<string | null | undefined>(undefined);
 
     // Restore open chat tabs per repo so switching projects keeps your session strip.
     React.useEffect(() => {
@@ -293,6 +295,9 @@ export function useChatSession(
         setTabsReady(false);
         const key = chatTabsStorageKey(project_path);
         tabsHydratedForRef.current = key;
+        const switchedProject =
+            hydratedProjectRef.current !== undefined && hydratedProjectRef.current !== project_path;
+        hydratedProjectRef.current = project_path;
 
         void (async () => {
             const persisted = readPersistedChatTabs(project_path);
@@ -327,6 +332,9 @@ export function useChatSession(
             } else {
                 setOpenChatTabs([{ id: NEW_CHAT_TAB_ID, title: "New Chat" }]);
                 setActiveChatTabId(NEW_CHAT_TAB_ID);
+                // On a real project switch, drop the previous project's chat from the view.
+                // Skipped on first mount so the chat the backend already has open is kept.
+                if (switchedProject) showConversation(null);
             }
             if (!cancelled) setTabsReady(true);
         })();
@@ -1038,6 +1046,8 @@ export function useChatSession(
         try {
             if (!shapeAuth.loggedIn || !shapeAuth.accessToken) {
                 setSendError("Sign in to Shape to chat.");
+                // The optimistic turn was opened above; no backend turn will ever close it.
+                stopLiveTurn();
                 setMessages((prev) => {
                     const last = prev[prev.length - 1];
                     if (last?.role === "assistant" && !last.content.trim()) {

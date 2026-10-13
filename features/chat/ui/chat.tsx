@@ -234,7 +234,7 @@ export default function Chat({
     const [activeTurn, selectTurn] = useChatTurnActive(
         scrollContainerRef,
         turnCount,
-        { streaming: session.isLoading },
+        { streaming: session.isLoading, rootKey: activeSubagent?.id ?? null },
     );
 
     const isEmpty = session.messages.length === 0;

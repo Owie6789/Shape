@@ -51,4 +51,17 @@ describe("plan origin registry", () => {
         recordPlanOrigin("/proj/plans/a.md", "chat-4");
         expect(getPlanOrigin("/proj/plans/a.md")).toBe("chat-4");
     });
+
+    it("keeps Windows UNC and drive paths absolute", () => {
+        expect(resolveProjectPlanPath("\\\\server\\share\\plans\\a.md", "C:/proj")).toBe(
+            "\\\\server\\share\\plans\\a.md",
+        );
+        expect(resolveProjectPlanPath("D:\\plans\\a.md", "C:/proj")).toBe("D:\\plans\\a.md");
+    });
+
+    it("keeps the UNC prefix of a project root and joins relative plans onto it", () => {
+        expect(resolveProjectPlanPath("plans/a.md", "\\\\server\\share\\proj")).toBe(
+            "//server/share/proj/plans/a.md",
+        );
+    });
 });

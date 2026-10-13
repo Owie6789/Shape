@@ -320,6 +320,8 @@ pub fn activate_conversation(
             history::collapse_duplicate_assistants(&mut loaded);
             let user_turns = loaded.iter().filter(|m| m.role == "user").count() as u32;
             *state.history.lock()? = loaded;
+            // The summary belonged to the chat being left; it must not reach this one's model context.
+            *state.history_summary.lock()? = None;
             *state.title.lock()? = Some(conv.title);
             let anchor = if conv.title_anchor_turns == 0 {
                 user_turns

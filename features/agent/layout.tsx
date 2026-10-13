@@ -53,6 +53,9 @@ function SidebarPeek({
     // It is shown while `shown` is true, or until that delay ends.
     const [host, setHost] = useState<HTMLElement>();
     const [mounted, setMounted] = useState(shown);
+    // Opening from hidden must mount the list too, so a later hide can run its exit delay.
+    // Adjusted during render instead of in an effect.
+    if (shown && !mounted) setMounted(true);
     const attachHost = useCallback((el: HTMLDivElement | null) => setHost(el ?? undefined), []);
 
     useEffect(() => {

@@ -270,23 +270,6 @@ fn save_current_conversation_inner(
     Ok(())
 }
 
-/// Update a chat that is not the live one, then write the project's chat file. The
-/// in-memory snapshot alone was lost on restart until some unrelated save happened.
-pub fn upsert_and_persist_snapshot(
-    state: &AgentState,
-    proj_path: &str,
-    id: &str,
-    title: &str,
-    history: Vec<ChatMessage>,
-) -> Result<(), AppError> {
-    upsert_conversation_snapshot(state, proj_path, id, title, history)?;
-    let convs = state.conversations.lock()?;
-    if let Some(list) = convs.get(proj_path) {
-        save_conversations(proj_path, list);
-    }
-    Ok(())
-}
-
 /// Persist a finished/abandoned turn into a specific conversation without touching the live chat.
 pub fn upsert_conversation_snapshot(
     state: &AgentState,

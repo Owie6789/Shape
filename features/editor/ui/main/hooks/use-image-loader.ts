@@ -106,7 +106,8 @@ export function useImageLoader(path: string, isImage: boolean) {
                 URL.revokeObjectURL(blobUrlRef.current);
             }
             blobUrlRef.current = src.startsWith("blob:") ? src : null;
-            patch({ svg: null, src });
+            // A successful load clears any error left by an earlier failed attempt.
+            patch({ svg: null, src, error: null });
             LOG("adopted src via", via, src.slice(0, 120));
         };
 
@@ -123,7 +124,7 @@ export function useImageLoader(path: string, isImage: boolean) {
                 try {
                     const content = await commands.readFile(actualPath);
                     if (cancelled) return;
-                    patch({ svg: content, src: null });
+                    patch({ svg: content, src: null, error: null });
                     LOG("svg loaded", content.length);
                 } catch (err) {
                     fail(err, "svg-read");

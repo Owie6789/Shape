@@ -16,9 +16,16 @@ export function planOriginKey(planPath: string): string {
 
 /** Absolute path of a plan file: relative paths are taken from the project root. */
 export function resolveProjectPlanPath(filePath: string, projectPath: string | null | undefined): string {
-    if (/^[a-zA-Z]:[\\\/]/.test(filePath) || filePath.startsWith("/")) return filePath;
+    // Drive paths (C:\..., C:/...), POSIX absolute paths, and Windows UNC paths (\\server\share)
+    // are already absolute and must not be joined onto the project.
+    if (/^[a-zA-Z]:[\\/]/.test(filePath) || /^[\\/]{2}/.test(filePath) || filePath.startsWith("/")) {
+        return filePath;
+    }
     if (!projectPath) return filePath;
-    return `${projectPath.replace(/\\/g, "/")}/${filePath.replace(/\\/g, "/")}`.replace(/\/+/g, "/");
+    const joined = `${projectPath.replace(/\\/g, "/")}/${filePath.replace(/\\/g, "/")}`;
+    // Keep a UNC prefix (//server/share) intact; collapse separators everywhere else.
+    const uncPrefix = joined.startsWith("//") ? "//" : "";
+    return uncPrefix + joined.slice(uncPrefix.length).replace(/\/+/g, "/");
 }
 
 function readAll(): Record<string, string> {

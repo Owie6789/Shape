@@ -426,8 +426,16 @@ const MenubarMenu = ({
                         "displayName" in child.type &&
                         (child.type as { displayName?: string }).displayName === MenubarTrigger.displayName)
                 ) {
+                    // React 19 passes `ref` as a prop. Keep the caller's ref and add ours, so
+                    // consumers that read the trigger element still receive it.
+                    const callerRef = (child.props as { ref?: React.Ref<HTMLElement> }).ref;
+                    const composedRef = (el: HTMLElement | null) => {
+                        setTriggerEl(el);
+                        if (typeof callerRef === "function") callerRef(el);
+                        else if (callerRef) (callerRef as React.MutableRefObject<HTMLElement | null>).current = el;
+                    };
                     return React.cloneElement(child as React.ReactElement<{ ref?: React.Ref<HTMLElement> }>, {
-                        ref: setTriggerEl,
+                        ref: composedRef,
                     });
                 }
                 return child;

@@ -546,6 +546,14 @@ pub(super) async fn gate_edit_approval(
 /// Snapshot a file's pre-edit state the first time this turn touches it, and
 /// persist it immediately so a crash mid-turn does not lose the checkpoint.
 pub(super) fn record_checkpoint(ctx: &ToolCtx<'_>, path: &str, original_content: Option<String>) {
+    // The live checkpoint list is indexed by the live chat's messages. A turn for a background
+    // chat has different indexes, so recording it here would corrupt the chat on screen.
+    if let Some(conv_id) = ctx.conversation_id.as_deref().filter(|s| !s.is_empty()) {
+        let live = ctx.agent_state.current_conversation_id.lock().ok().and_then(|g| g.clone());
+        if live.as_deref() != Some(conv_id) {
+            return;
+        }
+    }
     let message_index = ctx.agent_state.current_turn_index();
     ctx.agent_state.record_file_checkpoint(message_index, path, original_content);
     if let Some(conv_id) = ctx.conversation_id.as_deref().filter(|s| !s.is_empty()) {

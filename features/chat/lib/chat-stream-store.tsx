@@ -223,10 +223,14 @@ export function ChatStreamProvider({ children }: { children: React.ReactNode }) 
             const seq = ++viewSeqRef.current;
             setViewed(id);
             const live = liveTurnsRef.current.get(id ?? PENDING_KEY);
+            // Update the ref now, not after the next render: a send issued right after a switch
+            // must read the chat being shown, not the one that was on screen before.
             if (live) {
+                messagesRef.current = live.messages;
                 applyLive(live);
             } else {
                 const transcript = id ? (cached ?? transcriptCacheRef.current.get(id) ?? []) : [];
+                messagesRef.current = transcript;
                 applyIdle(transcript);
             }
             return seq;
@@ -417,7 +421,10 @@ export function ChatStreamProvider({ children }: { children: React.ReactNode }) 
                 const pending = liveTurnsRef.current.get(PENDING_KEY);
                 // A draft's turn is the only one that may take over the draft view. A chat
                 // started elsewhere must never pull the user out of the chat they picked.
-                const bindsDraft = Boolean(pending && convId);
+                // Only while the user is still on the draft view. The draft's turn carries no
+                // chat id until this event, so a chat started while another chat is on screen
+                // cannot be told apart from the draft's own turn.
+                const bindsDraft = Boolean(pending && convId && viewingIdRef.current === null);
                 const adoptsView = bindsDraft && viewingIdRef.current === null;
                 const existing = (convId && liveTurnsRef.current.get(convId)) || pending;
                 const base =

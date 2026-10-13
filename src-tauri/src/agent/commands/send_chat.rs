@@ -237,6 +237,11 @@ pub async fn send_chat_message(
         });
     }
 
+    // Captured before the first await: a concurrent send to another chat can replace the live
+    // history after this point, so this turn must build its context from its own snapshot.
+    let turn_base_history = state.history.lock()?.clone();
+    let turn_incognito = state.incognito();
+
     // Mid-chat model switch: prior turns may carry a different family.
     let switch_hint = {
         let hist = state.history.lock()?;
@@ -471,7 +476,7 @@ pub async fn send_chat_message(
     let final_system_prompt = prompt_parts.join("\n");
 
     let history_snapshot = {
-        let mut snapshot = state.history.lock()?.clone();
+        let mut snapshot = turn_base_history.clone();
         if messages::history_char_count(&snapshot) > messages::HISTORY_CHAR_BUDGET {
             let existing = state.history_summary.lock()?.clone();
             let middle = messages::slice_for_compression(&snapshot);
@@ -818,6 +823,7 @@ pub async fn send_chat_message(
             &owned_title,
             assistant_message.clone(),
             false,
+            turn_incognito,
         );
         // The open chat is still this turn. Send the same details the menu reads,
         // even though live history now belongs to whatever the user switched to.
@@ -854,6 +860,7 @@ pub async fn send_chat_message(
                 &owned_title,
                 assistant_message,
                 still_current,
+                turn_incognito,
             );
         }
         let _ = app_handle.emit(
@@ -904,6 +911,7 @@ fn persist_assistant_for_turn(
     title: &str,
     message: ChatMessage,
     is_live: bool,
+    turn_incognito: bool,
 ) -> Result<(), crate::core::error::AppError> {
     if is_live {
         {
@@ -918,7 +926,11 @@ fn persist_assistant_for_turn(
     let Some(path) = project else {
         return Ok(());
     };
-    // In-memory state is newer than the file between saves, so it wins; disk is the fallback
+    // An incognito chat is never written to disk, even when it finishes after a switch.
+    if turn_incognito {
+        return Ok(());
+    }
+    // In-memory history is newer than the file between saves, so it wins; disk is the fallback
     // for a chat that is not loaded in this session.
     let in_memory = {
         let convs = state.conversations.lock()?;
@@ -934,7 +946,7 @@ fn persist_assistant_for_turn(
         })
         .unwrap_or_default();
     history::replace_or_push_assistant(&mut hist, message);
-    history::upsert_and_persist_snapshot(state, path, conversation_id, title, hist)
+    history::upsert_conversation_snapshot(state, path, conversation_id, title, hist)
 }
 
 #[tauri::command]

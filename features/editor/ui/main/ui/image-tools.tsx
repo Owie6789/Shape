@@ -75,6 +75,8 @@ export function ImageAdjustmentsPanel({
     const [mounted, setMounted] = useState(open);
     // Entering is confirmed one frame after opening, so the CSS transition has a start state.
     const [entered, setEntered] = useState(false);
+    // Opening from closed must mark the panel mounted too, so a later close runs its exit.
+    if (open && !mounted) setMounted(true);
     const showing = open || mounted;
     const state = open && entered ? "open" : "closed";
 

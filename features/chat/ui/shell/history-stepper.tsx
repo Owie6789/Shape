@@ -96,7 +96,11 @@ export function ChatHistoryStepper({
 export function useChatTurnActive(
     scrollRoot: React.RefObject<HTMLElement | null>,
     turnCount: number,
-    opts?: { streaming?: boolean },
+    opts?: {
+        streaming?: boolean;
+        /** Changes when the element behind `scrollRoot` is replaced (e.g. a subagent view). */
+        rootKey?: string | null;
+    },
 ): [number, (index: number) => void] {
     const [active, setActive] = useState(0);
     const lockUntil = useRef(0);
@@ -206,7 +210,7 @@ export function useChatTurnActive(
             root.removeEventListener("scroll", onScroll);
             if (rafRef.current) cancelAnimationFrame(rafRef.current);
         };
-    }, [scrollRoot, turnCount]);
+    }, [scrollRoot, turnCount, opts?.rootKey]);
 
     const select = useCallback(
         (index: number) => {

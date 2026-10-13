@@ -50,6 +50,7 @@ export function DesignInspectOverlay({
 }) {
     const { project_path } = useProjectState();
     const [selected, setSelected] = useState<DesignElementSnapshot | null>(null);
+    const [frameSize, setFrameSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
     const [tab, setTab] = useState<Tab>("radius");
     const [radius, setRadius] = useState(8);
     const [padding, setPadding] = useState(12);
@@ -94,6 +95,9 @@ export function DesignInspectOverlay({
             if (data.type !== "shape-design-selection") return;
             const el = data.element as DesignElementSnapshot | null;
             setSelected(el);
+            // Remember the frame size at selection time, so the bar can be kept inside it.
+            const frame = iframeRef.current;
+            setFrameSize({ w: frame?.clientWidth ?? 0, h: frame?.clientHeight ?? 0 });
             if (el?.styles) {
                 setRadius(parsePx(el.styles.borderRadius || el.styles.borderTopLeftRadius));
                 setPadding(parsePx(el.styles.padding || el.styles.paddingTop));
@@ -124,8 +128,16 @@ export function DesignInspectOverlay({
 
     // A selection only arrives from the iframe, so its rect is already frame-relative.
     const rect = selected.rect;
-    const top = rect.y + rect.height + 8;
-    const left = Math.max(8, rect.x + rect.width / 2 - 160);
+    const BAR_W = 320;
+    const BAR_H = 44;
+    const EDGE = 8;
+    // Keep the bar inside the frame: clamp on both sides, and flip above the element when
+    // there is no room below it. A zero frame size (not measured yet) skips the clamp.
+    const maxLeft = frameSize.w > 0 ? frameSize.w - BAR_W - EDGE : Infinity;
+    const left = Math.min(Math.max(EDGE, rect.x + rect.width / 2 - BAR_W / 2), maxLeft);
+    const belowTop = rect.y + rect.height + EDGE;
+    const fitsBelow = frameSize.h <= 0 || belowTop + BAR_H <= frameSize.h - EDGE;
+    const top = fitsBelow ? belowTop : Math.max(EDGE, rect.y - BAR_H - EDGE);
 
     return (
         <div

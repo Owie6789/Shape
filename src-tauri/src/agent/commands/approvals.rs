@@ -46,9 +46,13 @@ pub async fn stop_chat_message(
     }
 
     logging::info("chat", "Stop requested by user");
-    let _ = crate::agent::tools::browse::finish_browse_markup(String::new()).await;
-    crate::agent::tools::browse::stop_session();
-    let _ = app.emit("agent-browse", serde_json::json!({"id": "live", "status": "stopped"}));
+    // The browser session, preview capture, and terminals belong to the chat on screen.
+    // Tearing them down for a background chat would break whichever chat is live.
+    if is_live {
+        let _ = crate::agent::tools::browse::finish_browse_markup(String::new()).await;
+        crate::agent::tools::browse::stop_session();
+        let _ = app.emit("agent-browse", serde_json::json!({"id": "live", "status": "stopped"}));
+    }
     // Cancel first so waiters observe Stop instead of a fake Reject (which
     // used to look like accepted edits were undone).
     if let Some(token) = state.conversation_cancel_token(&target) {
@@ -97,12 +101,15 @@ pub async fn stop_chat_message(
         }
     } else if let Some(path) = project_path.as_deref() {
         // Background chat: its partial text goes to its stored record, not the live chat.
-        if let Some((_, conv)) = history::find_conversation_by_id(&target, Some(path)) {
+        // Save into the chat's own project, which can differ from the active one.
+        if let Some((owner, conv)) = history::find_conversation_by_id(&target, Some(path)) {
             let merged = state.merge_in_flight_into_history_for(conv.history, Some(target.as_str()));
-            let _ = history::upsert_and_persist_snapshot(&state, path, &target, &conv.title, merged);
+            let _ = history::upsert_conversation_snapshot(&state, &owner, &target, &conv.title, merged);
         }
     }
-    state.clear_in_flight_for(&target);
+    // The in-flight slot is NOT released here. The cancelled turn still unwinds and clears its
+    // own slot when it finishes (`clear_in_flight_if`). Freeing it now let a new send start
+    // while the old turn was still running in the same chat.
 
     if let Some((turn_id, conv_id)) = aborted {
         let _ = app.emit(
@@ -119,11 +126,13 @@ pub async fn stop_chat_message(
     // capture host a moment to tear down its offscreen iframe *before* we
     // kill the PTY. Doing this concurrently raced WebView2 teardown against
     // process teardown and surfaced as "invalid window handle" on Windows.
-    app.state::<PreviewCaptureState>()
-        .abort_and_drain(&app, "Preview capture cancelled")
-        .await;
+    if is_live {
+        app.state::<PreviewCaptureState>()
+            .abort_and_drain(&app, "Preview capture cancelled")
+            .await;
 
-    state.kill_active_terminal(&pty_state).await;
+        state.kill_active_terminal(&pty_state).await;
+    }
     Ok(())
 }
 

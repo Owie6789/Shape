@@ -650,13 +650,6 @@ impl AgentState {
         self.in_flight_for(conversation_id).is_some()
     }
 
-    /// Release one conversation's in-flight slot (Stop on a background chat).
-    pub fn clear_in_flight_for(&self, conversation_id: &str) {
-        if let Ok(mut guard) = self.in_flight.lock() {
-            guard.remove(conversation_id);
-        }
-    }
-
     /// Generation state for `conversation_id`, or for the live chat when `None`.
     pub fn generation_state_for(&self, conversation_id: Option<&str>) -> ChatGenerationState {
         let snapshot = match conversation_id {

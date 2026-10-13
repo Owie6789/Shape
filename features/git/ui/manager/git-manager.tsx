@@ -269,8 +269,12 @@ function GitManagerGateInner() {
             .then((logs) => {
                 if (!cancelled) setProbe({ key, reason: logs.length === 0 ? "no-commits" : null });
             })
-            .catch(() => {
-                if (!cancelled) setProbe({ key, reason: "no-repo" });
+            .catch((err: unknown) => {
+                if (cancelled) return;
+                // Only a real "not a repository" answer means no repo. Permission or backend
+                // errors are unknown, so they must not show the no-repo empty state.
+                const message = err instanceof Error ? err.message : String(err);
+                setProbe({ key, reason: /not a git repository/i.test(message) ? "no-repo" : null });
             });
         return () => {
             cancelled = true;

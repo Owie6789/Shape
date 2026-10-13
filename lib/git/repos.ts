@@ -154,7 +154,13 @@ export function useGitRepos(workspaceRoot: string | null) {
             setRepoState({ root: rootAtStart, repos: discovered, activePath: defaultRepo, loading: false });
         } catch {
             if (gen !== generationRef.current) return;
-            setRepoState({ root: rootAtStart, repos: [], activePath: null, loading: false });
+            // A failed rescan keeps the repos already on screen for this root. Clearing them
+            // would empty the panel over a transient error.
+            setRepoState((prev) =>
+                prev.root === rootAtStart
+                    ? { ...prev, loading: false }
+                    : { root: rootAtStart, repos: [], activePath: null, loading: false },
+            );
         }
     }, [workspaceRoot]);
 

@@ -82,9 +82,14 @@ export default function PreviewPanel({
     useEffect(() => {
         if (!project_path) return;
         const path = project_path;
-        void isWebProject(path)
-            .then((web) => setWebAnswer({ path, web }))
-            .catch(() => setWebAnswer({ path, web: false }));
+        // A late answer for a previous project must not replace the current project's answer.
+        let current = true;
+        isWebProject(path)
+            .then((web) => current && setWebAnswer({ path, web }))
+            .catch(() => current && setWebAnswer({ path, web: false }));
+        return () => {
+            current = false;
+        };
     }, [project_path]);
 
     const localSite = isLocalPreviewUrl(currentUrl);
