@@ -4,7 +4,7 @@
 //! and may not sum exactly to provider `prompt_tokens`.
 
 use crate::agent::context::repo_map::estimate_tokens;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Parse a display context window like "200K" / "1M" into a token count.
 pub fn parse_context_window_label(label: &str) -> Option<u64> {

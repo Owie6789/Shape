@@ -34,23 +34,20 @@ jobs:
       - run: npm ci
 
       - name: ESLint
-        # Currently 91 errors + 3375 warnings exist (mostly @typescript-eslint/no-unused-expressions from generated files).
-        # eslint exits 0 even with errors due to Next.js flat config behavior - needs fixing.
-        # For now, capture status correctly with pipefail, but allow existing baseline.
-        # Once fixed, change to: npm run lint:strict
+        # Now 0 errors, 224 warnings after downgrading strict React 19 rules to warnings
+        # This step now properly gates merges - fails on errors
         run: |
-          set +e
           set -o pipefail
           npm run lint 2>&1 | tee eslint-report.txt
           STATUS=${PIPESTATUS[0]}
           ERRORS=$(grep -c " error " eslint-report.txt || echo 0)
-          echo "ESLint exit: $STATUS, errors: $ERRORS (currently allowed, should be 0)"
+          WARNINGS=$(grep -c " warning " eslint-report.txt || echo 0)
+          echo "ESLint exit: $STATUS, errors: $ERRORS, warnings: $WARNINGS"
           if [ "$STATUS" -ne 0 ]; then
-            echo "::warning::ESLint found $ERRORS errors - tracking as tech debt (91 errors baseline)"
-            echo "To enforce strict lint, fix errors and uncomment exit"
+            echo "::error::ESLint found $ERRORS errors - must be fixed"
+            exit $STATUS
           fi
-          # Always pass for now - TODO enforce after cleanup
-          exit 0
+          echo "✓ ESLint passed with $WARNINGS warnings (allowed, but should be reduced)"
 
       - name: Typecheck
         run: npx tsc --noEmit
@@ -145,20 +142,10 @@ jobs:
           rust-components: "rustfmt,clippy"
 
       - name: Cargo fmt (check)
-        run: |
-          if ! cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check; then
-            echo "::warning::Rust formatting issues found - run 'cargo fmt' locally"
-            echo "For now, warning only - TODO enforce after cleanup"
-            # To enforce: exit 1
-          fi
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
 
       - name: Cargo clippy (deny warnings)
-        run: |
-          if ! cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings; then
-            echo "::warning::Clippy warnings found"
-            # TODO enforce after fixing
-            # exit 1
-          fi
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
 
       - name: Cargo check (all features)
         run: cargo check --manifest-path src-tauri/Cargo.toml --all-features

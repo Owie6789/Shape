@@ -80,7 +80,10 @@ try {
 "#;
 
 fn encoded_powershell(script: &str) -> String {
-    let bytes: Vec<u8> = script.encode_utf16().flat_map(|unit| unit.to_le_bytes()).collect();
+    let bytes: Vec<u8> = script
+        .encode_utf16()
+        .flat_map(|unit| unit.to_le_bytes())
+        .collect();
     base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes)
 }
 
@@ -184,8 +187,13 @@ pub fn dictation_start(app: tauri::AppHandle) -> Result<(), String> {
             const CREATE_NO_WINDOW: u32 = 0x0800_0000;
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
-        let mut child = cmd.spawn().map_err(|e| format!("Dictation couldn't start ({e})."))?;
-        let stdout = child.stdout.take().ok_or_else(|| "Dictation has no output.".to_string())?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("Dictation couldn't start ({e})."))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "Dictation has no output.".to_string())?;
         let stderr = child.stderr.take();
         let stdin = child.stdin.take();
         {

@@ -51,12 +51,16 @@ pub fn sync_mcp_servers(
 }
 
 #[tauri::command]
-pub fn get_mcp_status(mcp_state: tauri::State<'_, McpState>) -> Result<Vec<McpStatusEntry>, AppError> {
+pub fn get_mcp_status(
+    mcp_state: tauri::State<'_, McpState>,
+) -> Result<Vec<McpStatusEntry>, AppError> {
     mcp_state.get_status().map_err(|e| AppError::Message(e))
 }
 
 #[tauri::command]
-pub fn get_mcp_tools(mcp_state: tauri::State<'_, McpState>) -> Result<Vec<crate::mcp::McpToolInfo>, AppError> {
+pub fn get_mcp_tools(
+    mcp_state: tauri::State<'_, McpState>,
+) -> Result<Vec<crate::mcp::McpToolInfo>, AppError> {
     mcp_state.all_tools().map_err(|e| AppError::Message(e))
 }
 
@@ -65,7 +69,9 @@ pub fn restart_mcp_server(
     id: String,
     mcp_state: tauri::State<'_, McpState>,
 ) -> Result<McpStatusEntry, AppError> {
-    mcp_state.restart_server(&id).map_err(|e| AppError::Message(e))
+    mcp_state
+        .restart_server(&id)
+        .map_err(|e| AppError::Message(e))
 }
 
 #[tauri::command]

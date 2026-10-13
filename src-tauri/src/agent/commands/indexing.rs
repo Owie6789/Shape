@@ -86,7 +86,5 @@ pub fn get_index_status(
     let path = project_path
         .or_else(|| app_state.0.lock().ok()?.project_path.clone())
         .ok_or_else(|| AppError::Message("No project path".to_string()))?;
-    index_state
-        .status(&path)
-        .map_err(|e| AppError::Message(e))
+    index_state.status(&path).map_err(|e| AppError::Message(e))
 }

@@ -25,7 +25,10 @@ pub fn discover_python_interpreters(project_path: Option<String>) -> Vec<PythonI
         }
         let version = probe_version(&path);
         let label = match version.as_deref() {
-            Some(v) if kind.to_lowercase().contains("venv") || kind.to_lowercase().contains("conda") => {
+            Some(v)
+                if kind.to_lowercase().contains("venv")
+                    || kind.to_lowercase().contains("conda") =>
+            {
                 format!("Python {v} ({kind})")
             }
             Some(v) => format!("Python {v}"),
@@ -111,18 +114,17 @@ pub fn discover_python_interpreters(project_path: Option<String>) -> Vec<PythonI
 
 fn probe_version(path: &Path) -> Option<String> {
     let output = Command::new(path)
-        .args(["-c", "import sys; print('.'.join(map(str, sys.version_info[:3])))"])
+        .args([
+            "-c",
+            "import sys; print('.'.join(map(str, sys.version_info[:3])))",
+        ])
         .output()
         .ok()?;
     if !output.status.success() {
         return None;
     }
     let v = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if v.is_empty() {
-        None
-    } else {
-        Some(v)
-    }
+    if v.is_empty() { None } else { Some(v) }
 }
 
 #[cfg(windows)]
@@ -138,11 +140,7 @@ fn where_cmd(command: &str) -> Option<Vec<PathBuf>> {
         .filter(|l| !l.is_empty())
         .map(PathBuf::from)
         .collect();
-    if paths.is_empty() {
-        None
-    } else {
-        Some(paths)
-    }
+    if paths.is_empty() { None } else { Some(paths) }
 }
 
 #[cfg(not(windows))]
@@ -158,9 +156,5 @@ fn which_cmd(command: &str) -> Option<Vec<PathBuf>> {
         .filter(|l| !l.is_empty())
         .map(PathBuf::from)
         .collect();
-    if paths.is_empty() {
-        None
-    } else {
-        Some(paths)
-    }
+    if paths.is_empty() { None } else { Some(paths) }
 }

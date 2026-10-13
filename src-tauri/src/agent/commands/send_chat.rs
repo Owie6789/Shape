@@ -1,7 +1,4 @@
 //! Primary chat turn entrypoint.
-use crate::agent::context::{
-    build_context_breakdown, build_context_with_options, context_options_for_query,
-};
 use super::history;
 use super::journals;
 use super::logging;
@@ -9,19 +6,21 @@ use super::messages;
 use super::run_turn;
 use super::streaming;
 use super::titles::{
-    apply_generated_title, maybe_regenerate_title, text_for_title,
-    title_from_message,
+    apply_generated_title, maybe_regenerate_title, text_for_title, title_from_message,
 };
-use crate::agent::tools::schema;
+use crate::agent::context::{
+    build_context_breakdown, build_context_with_options, context_options_for_query,
+};
 use crate::agent::model_router;
 use crate::agent::models::{AgentState, AutoRunMode, ChatMessage, TurnPolicy};
-use std::collections::HashMap;
 use crate::agent::prompts;
+use crate::agent::tools::schema;
 use crate::app_state::AppState;
 use crate::commands::pty::PtyState;
 use crate::core::error::AppError;
 use reqwest::Client;
 use serde_json::json;
+use std::collections::HashMap;
 use tauri::{Emitter, Manager};
 
 use history::now_f64;
@@ -65,9 +64,9 @@ pub async fn send_chat_message(
         .filter(|m| !m.trim().is_empty())
         .unwrap_or_else(|| MODEL_DEFAULT.to_string());
     let llm_provider = streaming::LlmProvider::Shape;
-    let auth_token = access_token.filter(|t| !t.trim().is_empty()).ok_or_else(|| {
-        AppError::Env("Sign in to Shape to use AI chat.".to_string())
-    })?;
+    let auth_token = access_token
+        .filter(|t| !t.trim().is_empty())
+        .ok_or_else(|| AppError::Env("Sign in to Shape to use AI chat.".to_string()))?;
     let client = Client::new();
     let current_proj_path = app_state.0.lock()?.project_path.clone();
     let selected_auto = model_router::is_auto_selection(&raw_model);
@@ -77,9 +76,8 @@ pub async fn send_chat_message(
         .history
         .lock()
         .map(|h| {
-            h.iter().any(|m| {
-                m.role == "user" && model_router::content_has_images(&m.content)
-            })
+            h.iter()
+                .any(|m| m.role == "user" && model_router::content_has_images(&m.content))
         })
         .unwrap_or(false);
     let has_images = model_router::content_has_images(&message) || history_has_images;
@@ -173,7 +171,10 @@ pub async fn send_chat_message(
         if *active_proj != current_proj_path {
             logging::info(
                 "chat",
-                &format!("Project switched from {:?} to {:?}", active_proj, current_proj_path),
+                &format!(
+                    "Project switched from {:?} to {:?}",
+                    active_proj, current_proj_path
+                ),
             );
             if let Some(old_path) = active_proj.as_ref() {
                 let _ = history::save_current_conversation(&state, old_path);
@@ -415,10 +416,19 @@ pub async fn send_chat_message(
         "chat",
         &format!(
             "Steer packs: workspace={} plugins={} browse={} web={} git={} terminal={} media={}",
-            steer.workspace, steer.plugins, steer.browse, steer.web, steer.git, steer.terminal, steer.media
+            steer.workspace,
+            steer.plugins,
+            steer.browse,
+            steer.web,
+            steer.git,
+            steer.terminal,
+            steer.media
         ),
     );
-    logging::debug("chat", &format!("Context built: {} chars", context_string.len()));
+    logging::debug(
+        "chat",
+        &format!("Context built: {} chars", context_string.len()),
+    );
 
     let mut prompt_parts = vec![prompts::SYSTEM_MD.to_string()];
     if !family_prompt.trim().is_empty() {
@@ -556,10 +566,7 @@ pub async fn send_chat_message(
         &model_to_use,
     );
     if mcp_tokens > 0 {
-        let tools_tokens = breakdown
-            .get("tools")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
+        let tools_tokens = breakdown.get("tools").and_then(|v| v.as_u64()).unwrap_or(0);
         breakdown["mcpTools"] = json!(mcp_tokens);
         breakdown["tools"] = json!(tools_tokens.saturating_sub(mcp_tokens));
     }
@@ -630,10 +637,7 @@ pub async fn send_chat_message(
     let mut final_full_response =
         crate::agent::tools::browse::finish_browse_markup(turn_outcome.response_text).await;
     if final_full_response.contains("<browse_session") {
-        let _ = app_handle.emit(
-            "agent-browse",
-            json!({ "id": "live", "status": "stopped" }),
-        );
+        let _ = app_handle.emit("agent-browse", json!({ "id": "live", "status": "stopped" }));
     }
     let loop_count = turn_outcome.loop_count;
     let interrupt_error = turn_outcome.interrupt_error;
@@ -897,7 +901,12 @@ pub fn update_turn_policy(
     if let Some(v) = protect_destructive_git {
         policy.protect_destructive_git = v;
     }
-    if let Some(id) = state.current_conversation_id.lock().ok().and_then(|g| g.clone()) {
+    if let Some(id) = state
+        .current_conversation_id
+        .lock()
+        .ok()
+        .and_then(|g| g.clone())
+    {
         state.set_turn_policy_for(&id, policy);
     } else {
         state.set_turn_policy(policy);

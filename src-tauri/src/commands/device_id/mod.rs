@@ -2,8 +2,8 @@ use uuid::Uuid;
 
 #[cfg(target_os = "windows")]
 fn read_or_create_device_id() -> Result<String, String> {
-    use winreg::enums::*;
     use winreg::RegKey;
+    use winreg::enums::*;
 
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let (key, _) = hkcu
@@ -17,8 +17,7 @@ fn read_or_create_device_id() -> Result<String, String> {
     }
 
     let id = Uuid::new_v4().to_string();
-    key.set_value("DeviceId", &id)
-        .map_err(|e| e.to_string())?;
+    key.set_value("DeviceId", &id).map_err(|e| e.to_string())?;
     Ok(id)
 }
 

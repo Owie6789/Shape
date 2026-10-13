@@ -10,7 +10,7 @@ pub use types::*;
 use client::McpClient as StdioClient;
 use http_client::HttpMcpClient;
 use oauth::get_token;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -104,7 +104,10 @@ impl McpState {
         .map(ConnectedClient::Stdio)
     }
 
-    pub fn sync_servers(&self, servers: Vec<McpServerConfig>) -> Result<Vec<McpStatusEntry>, String> {
+    pub fn sync_servers(
+        &self,
+        servers: Vec<McpServerConfig>,
+    ) -> Result<Vec<McpStatusEntry>, String> {
         {
             let mut configs = self.configs.lock().map_err(|e| e.to_string())?;
             *configs = servers.clone();

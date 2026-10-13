@@ -89,10 +89,7 @@ fn add_worktree(repo: &str, slug: &str) -> Result<Checkout, String> {
         .unwrap_or(0);
     let slug = sanitize_slug(slug);
     let branch = format!("shape/{slug}-{millis}");
-    let folder = root
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("repo");
+    let folder = root.file_name().and_then(|n| n.to_str()).unwrap_or("repo");
     let parent = root.parent().unwrap_or(root);
     let dest = parent.join(format!("{folder}-{}", branch.replace('/', "-")));
     let dest_str = dest.to_string_lossy().to_string();

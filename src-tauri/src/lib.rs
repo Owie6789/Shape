@@ -66,15 +66,15 @@ pub fn run() {
         if fresh_window {
             // Second process: do not register the singleton plugin.
         } else {
-        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
-            for arg in &argv {
-                if arg.contains("shape://") {
-                    emit_shape_deep_link(app, arg);
-                    return;
+            builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+                for arg in &argv {
+                    if arg.contains("shape://") {
+                        emit_shape_deep_link(app, arg);
+                        return;
+                    }
                 }
-            }
-            focus_shape_windows(app);
-        }));
+                focus_shape_windows(app);
+            }));
         }
     }
 

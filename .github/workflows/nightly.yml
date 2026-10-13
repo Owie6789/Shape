@@ -118,6 +118,8 @@ jobs:
           path: |
             src-tauri/target/**/bundle/nsis/*.exe
             dist/nightly-placeholder/
+            dist/version.txt
+            dist/nightly-version.txt
           if-no-files-found: error
           retention-days: 3
 
@@ -153,19 +155,37 @@ jobs:
         id: version
         run: |
           set -euo pipefail
-          # Try to extract version from built artifacts or package.json
-          # Don't recompute date here - use the version that was embedded in installers during build
-          # Build artifacts should contain version info, or we fallback to package.json + date
-          # For safety, we check if any installer contains nightly version, or use build-check output
           BASE=$(node -p "require('./package.json').version")
-          # If we have a version file from build, use it; otherwise generate but warn about midnight crossing
-          if [ -f "dist/nightly/version.txt" ]; then
-            NIGHTLY=$(cat dist/nightly/version.txt)
-            echo "Using version from artifact: $NIGHTLY"
+          # Look for version file in multiple possible locations (artifacts may be nested)
+          VERSION_FILE=""
+          for candidate in \
+            "dist/nightly/version.txt" \
+            "dist/nightly/dist/version.txt" \
+            "dist/nightly/nightly-version.txt" \
+            "dist/nightly/dist/nightly-version.txt" \
+            "dist/version.txt" \
+            "dist/nightly-version.txt"; do
+            if [ -f "$candidate" ]; then
+              VERSION_FILE="$candidate"
+              break
+            fi
+          done
+          # Also search recursively
+          if [ -z "$VERSION_FILE" ]; then
+            FOUND=$(find dist/nightly -name "version.txt" -o -name "nightly-version.txt" 2>/dev/null | head -n1 || true)
+            if [ -n "$FOUND" ]; then
+              VERSION_FILE="$FOUND"
+            fi
+          fi
+          if [ -n "$VERSION_FILE" ] && [ -f "$VERSION_FILE" ]; then
+            NIGHTLY=$(cat "$VERSION_FILE")
+            echo "Using version from artifact $VERSION_FILE: $NIGHTLY"
           else
-            # Fallback: use date, but this could differ from installer version if crossing midnight
+            # Fallback: use date, but warn about midnight crossing risk
             NIGHTLY="${BASE}-nightly.$(date +%Y%m%d).${GITHUB_RUN_NUMBER}"
-            echo "::warning::No version.txt in artifacts, using recomputed version $NIGHTLY - may differ if crossing midnight"
+            echo "::warning::No version.txt found in artifacts (searched dist/nightly), using recomputed $NIGHTLY - may mismatch installers if crossing midnight"
+            echo "Searched: dist/nightly/version.txt, dist/version.txt, and recursive find"
+            ls -R dist/nightly 2>/dev/null | head -n 50 || true
           fi
           echo "version=$NIGHTLY" >> "$GITHUB_OUTPUT"
           echo "Nightly version: $NIGHTLY"

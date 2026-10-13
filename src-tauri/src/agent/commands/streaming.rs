@@ -1,18 +1,17 @@
 /// SSE streaming for chat completions through the Shape website proxy.
 /// Reasoning deltas are shown in the UI as `<think>` blocks and attached to the
 /// assistant message so the next request in the same turn can continue from them.
-
 use futures::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::time::Instant;
 use tauri::Emitter;
 use tauri::Manager;
 
-use crate::core::error::AppError;
 use super::logging;
 use super::tool_call_leak_parser::{LeakedToolCallParser, ParsedLeakCall};
+use crate::core::error::AppError;
 
 pub fn completions_url() -> String {
     let base = crate::core::website_url::shape_website_base();
@@ -230,12 +229,10 @@ pub(crate) fn shape_proxy_request(
         .header("Content-Type", "application/json");
 
     if matches!(ctx.provider, LlmProvider::Shape) {
-        builder = builder
-            .header("X-Shape-Feature", &ctx.feature)
-            .header(
-                "X-Shape-Client-Version",
-                crate::core::build_attestation::client_version(),
-            );
+        builder = builder.header("X-Shape-Feature", &ctx.feature).header(
+            "X-Shape-Client-Version",
+            crate::core::build_attestation::client_version(),
+        );
         if let Some(turn_id) = &ctx.turn_id {
             builder = builder.header("X-Shape-Turn-Id", turn_id);
         }
@@ -337,7 +334,10 @@ pub async fn stream_chat(
     );
 
     let max_tokens = get_model_max_tokens(model);
-    logging::debug("stream", &format!("Using max_tokens={} for model={}", max_tokens, model));
+    logging::debug(
+        "stream",
+        &format!("Using max_tokens={} for model={}", max_tokens, model),
+    );
 
     let model = rewrite_model_for_provider(model, &proxy_ctx.provider)?;
 
@@ -536,7 +536,7 @@ pub async fn stream_chat(
             next = stream.next() => next,
         }
     } {
-            if token.is_cancelled() {
+        if token.is_cancelled() {
             logging::info("stream", "Cancelled by user during stream");
             if !defer_content_emit && !token_buffer.is_empty() {
                 emit_stream_token(app_handle, proxy_ctx, token_buffer);
@@ -566,10 +566,7 @@ pub async fn stream_chat(
                 {
                     logging::warn(
                         "stream",
-                        &format!(
-                            "Stream body closed after usable data (ignoring): {}",
-                            e
-                        ),
+                        &format!("Stream body closed after usable data (ignoring): {}", e),
                     );
                     break;
                 }
@@ -603,7 +600,9 @@ pub async fn stream_chat(
                 continue;
             }
 
-            let Some(data) = line.strip_prefix("data: ") else { continue };
+            let Some(data) = line.strip_prefix("data: ") else {
+                continue;
+            };
             if data.trim() == "[DONE]" {
                 continue;
             }
@@ -744,14 +743,11 @@ pub async fn stream_chat(
                 }
 
                 // Long tool-arg streams (esp. render_design_previews) produce no chat tokens.
-                let primary = tool_call_buf
-                    .iter()
-                    .find(|t| !t.name.is_empty())
-                    .cloned();
+                let primary = tool_call_buf.iter().find(|t| !t.name.is_empty()).cloned();
                 if let Some(primary) = primary {
                     let name = primary.name.clone();
-                    let should_announce = name != "decide"
-                        && announced_tool_name.as_deref() != Some(name.as_str());
+                    let should_announce =
+                        name != "decide" && announced_tool_name.as_deref() != Some(name.as_str());
                     if should_announce {
                         announced_tool_name = Some(name.clone());
                         let label = if name == "render_design_previews" {
@@ -761,7 +757,9 @@ pub async fn stream_chat(
                             let mut chars = pretty.chars();
                             match chars.next() {
                                 None => pretty,
-                                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                                Some(first) => {
+                                    first.to_uppercase().collect::<String>() + chars.as_str()
+                                }
                             }
                         };
                         emit_chat_status(
@@ -860,9 +858,7 @@ pub async fn stream_chat(
         );
     }
 
-    if !tool_calls.is_empty()
-        && finish_reason.as_deref() == Some("stop")
-    {
+    if !tool_calls.is_empty() && finish_reason.as_deref() == Some("stop") {
         finish_reason = Some("tool_calls".to_string());
     }
     let (final_input, final_output) = if input_tokens > 0 || output_tokens > 0 {
@@ -913,11 +909,7 @@ pub async fn stream_chat(
 }
 
 fn nonempty_string(s: String) -> Option<String> {
-    if s.is_empty() {
-        None
-    } else {
-        Some(s)
-    }
+    if s.is_empty() { None } else { Some(s) }
 }
 
 fn nonempty_details(details: &[Value]) -> Option<Value> {
@@ -969,14 +961,7 @@ pub async fn stream_chat_with_retry(
         "Empty response received, retrying once before bailing",
     );
     let second = stream_chat(
-        client,
-        api_key,
-        messages,
-        tools,
-        app_handle,
-        token,
-        model,
-        proxy_ctx,
+        client, api_key, messages, tools, app_handle, token, model, proxy_ctx,
     )
     .await?;
     Ok(second)
@@ -1053,7 +1038,11 @@ pub async fn complete_chat_cancellable(
 ) -> Result<String, AppError> {
     logging::debug(
         "complete",
-        &format!("Non-streaming call: model={}, prompt_len={}", model, prompt.len()),
+        &format!(
+            "Non-streaming call: model={}, prompt_len={}",
+            model,
+            prompt.len()
+        ),
     );
 
     if cancel.is_some_and(|t| t.is_cancelled()) {
@@ -1244,7 +1233,10 @@ fn get_model_max_tokens(model: &str) -> u32 {
 
 /// UI effort (`low` | `high` | `ultra` | `max` | `super`) → OpenRouter effort string.
 fn openrouter_effort(user_effort: Option<&str>) -> &'static str {
-    match user_effort.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
+    match user_effort
+        .map(|s| s.trim().to_ascii_lowercase())
+        .as_deref()
+    {
         Some("super") | Some("max") | Some("ultra") | Some("xhigh") => "xhigh",
         Some("high") | Some("medium") => "high",
         // fast / low / missing
@@ -1272,7 +1264,13 @@ fn reasoning_config_for_model(model: &str, user_effort: Option<&str>) -> Option<
         Some(json!({ "max_tokens": gemini_budget }))
     } else if m.contains("anthropic/") || m.contains("claude") {
         // Anthropic via OpenRouter: low | medium | high (no xhigh) — map ultra → high
-        let anth = if effort == "xhigh" { "high" } else if effort == "high" { "high" } else { "low" };
+        let anth = if effort == "xhigh" {
+            "high"
+        } else if effort == "high" {
+            "high"
+        } else {
+            "low"
+        };
         Some(json!({ "effort": anth }))
     } else if m.contains("gpt-5") && !m.contains("nano") {
         Some(json!({ "effort": effort }))
