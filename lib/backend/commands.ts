@@ -526,6 +526,8 @@ export const commands = {
          * starts a new chat. The backend never guesses from its own current pointer.
          */
         conversationId?: string | null,
+        /** Client-generated id for this send. The backend echoes it in `chat_started`. */
+        clientRequestId?: string | null,
     ) =>
         invokeCommand<string>("send_chat_message", {
             message,
@@ -550,6 +552,7 @@ export const commands = {
             subagentModels: subagentModels ?? null,
             subagentDefaultModel: subagentDefaultModel ?? null,
             conversationId: conversationId ?? null,
+            clientRequestId: clientRequestId ?? null,
         }),
     captureHtmlPreview: (options: {
         html: string;

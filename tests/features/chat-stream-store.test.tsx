@@ -221,11 +221,26 @@ describe("a chat that runs in the background stays in the background", () => {
         });
         // A send from the draft shows its message first; that creates the pending turn.
         act(() => {
-            api.appendUserOptimistic("first", null);
+            api.appendUserOptimistic("first", null, "r-1");
         });
-        emit("chat_started", { conversationId: "N1", turnId: "t-1" });
+        emit("chat_started", { conversationId: "N1", turnId: "t-1", requestId: "r-1" });
         expect(adopted).toEqual(["N1"]);
         expect(api.viewedConversationId).toBe("N1");
         expect(api.getDraftConversationId()).toBe("N1");
+    });
+
+    it("a chat that starts while a draft is pending does not take the draft's turn", async () => {
+        await mount(null);
+        act(() => {
+            api.appendUserOptimistic("draft words", null, "r-draft");
+        });
+        // Another chat starts first. It carries a different request id, so it must not bind.
+        emit("chat_started", { conversationId: "B", turnId: "t-b", requestId: "r-other" });
+        expect(api.getDraftConversationId()).toBeNull();
+        expect(api.messages.map((m) => m.content)).toEqual(["draft words", ""]);
+
+        // The draft's own turn then binds to its new id.
+        emit("chat_started", { conversationId: "N2", turnId: "t-2", requestId: "r-draft" });
+        expect(api.getDraftConversationId()).toBe("N2");
     });
 });

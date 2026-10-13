@@ -64,6 +64,8 @@ type LiveTurn = {
     messages: ChatMessage[];
     activityLabel: string | null;
     turnPhase: TurnPhase;
+    /** Client id of the send that opened a draft turn. Echoed back by `chat_started`. */
+    requestId?: string | null;
 };
 
 type ChatStreamContextValue = ChatStreamState & {
@@ -88,7 +90,11 @@ type ChatStreamContextValue = ChatStreamState & {
     /** Called when a draft's turn is bound to its real conversation id. */
     setDraftAdopter: (fn: ((conversationId: string) => void) | null) => void;
     /** Show the user's message in the chat it was sent to (not necessarily the one on screen). */
-    appendUserOptimistic: (userMsg: string, conversationId: string | null) => void;
+    appendUserOptimistic: (
+        userMsg: string,
+        conversationId: string | null,
+        requestId?: string | null,
+    ) => void;
     /** Instantly drop the live-turn spinner so Stop does not wait on the stream. */
     stopLiveTurn: () => void;
     /** Leave a running turn in the background and show an empty draft. */
@@ -311,7 +317,7 @@ export function ChatStreamProvider({ children }: { children: React.ReactNode }) 
     }, []);
 
     const appendUserOptimistic = React.useCallback(
-        (userMsg: string, conversationId: string | null) => {
+        (userMsg: string, conversationId: string | null, requestId?: string | null) => {
             const optimisticTs = Date.now() / 1000;
             const onScreen = viewingIdRef.current === conversationId;
             const key = conversationId ?? PENDING_KEY;
@@ -335,6 +341,7 @@ export function ChatStreamProvider({ children }: { children: React.ReactNode }) 
                 messages: next,
                 activityLabel: "Thinking",
                 turnPhase: "thinking",
+                requestId: requestId ?? null,
             });
             if (onScreen) {
                 setMessages(next);
@@ -405,6 +412,7 @@ export function ChatStreamProvider({ children }: { children: React.ReactNode }) 
             listen<{
                 turnId?: string;
                 conversationId?: string;
+                requestId?: string;
                 model?: string;
                 usedAuto?: boolean;
             }>("chat_started", (event) => {
@@ -419,14 +427,17 @@ export function ChatStreamProvider({ children }: { children: React.ReactNode }) 
                     ignoredIdsRef.current.delete(convId);
                 }
                 const pending = liveTurnsRef.current.get(PENDING_KEY);
-                // A draft's turn is the only one that may take over the draft view. A chat
-                // started elsewhere must never pull the user out of the chat they picked.
-                // Only while the user is still on the draft view. The draft's turn carries no
-                // chat id until this event, so a chat started while another chat is on screen
-                // cannot be told apart from the draft's own turn.
-                const bindsDraft = Boolean(pending && convId && viewingIdRef.current === null);
+                // Only the send that opened the draft may bind it. The draft's turn has no chat
+                // id until this event, so the request id is the only link between the two. Any
+                // other chat that starts meanwhile keeps its own transcript and leaves the draft alone.
+                const eventRequestId = event.payload?.requestId ?? null;
+                const bindsDraft = Boolean(
+                    pending && convId && pending.requestId && eventRequestId === pending.requestId,
+                );
                 const adoptsView = bindsDraft && viewingIdRef.current === null;
-                const existing = (convId && liveTurnsRef.current.get(convId)) || pending;
+                const existing = bindsDraft
+                    ? pending
+                    : (convId && liveTurnsRef.current.get(convId)) || undefined;
                 const base =
                     existing?.messages
                     ?? (viewingIdRef.current === convId
@@ -450,7 +461,7 @@ export function ChatStreamProvider({ children }: { children: React.ReactNode }) 
                     }
                 }
                 const key = convId || PENDING_KEY;
-                liveTurnsRef.current.delete(PENDING_KEY);
+                if (bindsDraft) liveTurnsRef.current.delete(PENDING_KEY);
                 liveTurnsRef.current.set(key, {
                     conversationId: convId,
                     turnId: tid,

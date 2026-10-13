@@ -218,6 +218,37 @@ pub struct TurnCheckpoint {
     pub files: Vec<FileSnapshot>,
 }
 
+/// Record the pre-edit content of `path` for the turn at `message_index`, once per file.
+/// Shared by the live chat's list and by a background chat's file on disk.
+pub fn record_into_checkpoints(
+    checkpoints: &mut Vec<TurnCheckpoint>,
+    message_index: usize,
+    path: &str,
+    original_content: Option<String>,
+) {
+    let entry = checkpoints
+        .iter_mut()
+        .find(|c| c.message_index == message_index);
+    match entry {
+        Some(cp) => {
+            if cp.files.iter().any(|f| f.path == path) {
+                return;
+            }
+            cp.files.push(FileSnapshot {
+                path: path.to_string(),
+                original_content,
+            });
+        }
+        None => checkpoints.push(TurnCheckpoint {
+            message_index,
+            files: vec![FileSnapshot {
+                path: path.to_string(),
+                original_content,
+            }],
+        }),
+    }
+}
+
 pub struct AgentState {
     pub history: Mutex<Vec<ChatMessage>>,
     pub title: Mutex<Option<String>>,
@@ -270,6 +301,8 @@ pub struct AgentState {
     /// history index of the user turn that produced them. Restoring a checkpoint
     /// replays these (most recent first) back onto disk.
     pub file_checkpoints: Mutex<Vec<TurnCheckpoint>>,
+    /// Message index each chat's turn started at (keyed by chat id).
+    pub turn_checkpoint_index: Mutex<HashMap<String, usize>>,
     /// When true, `list_chats` / `read_chat` tools are offered to the model.
     pub chat_memory_enabled: AtomicBool,
     /// Ephemeral chat: history is not written to disk.
@@ -316,6 +349,7 @@ impl AgentState {
             in_flight_last_save: Mutex::new(0.0),
             design_preview: Mutex::new(DesignPreviewState::default()),
             file_checkpoints: Mutex::new(Vec::new()),
+            turn_checkpoint_index: Mutex::new(HashMap::new()),
             chat_memory_enabled: AtomicBool::new(false),
             incognito: AtomicBool::new(false),
             subagent_models: Mutex::new(vec!["auto".to_string()]),
@@ -712,32 +746,24 @@ impl AgentState {
     /// turn starting at `message_index`. Subsequent edits to the same file within
     /// the same turn are no-ops (we only ever want the *original* state).
     pub fn record_file_checkpoint(&self, message_index: usize, path: &str, original_content: Option<String>) {
-        let Ok(mut checkpoints) = self.file_checkpoints.lock() else {
-            return;
-        };
-        let entry = checkpoints
-            .iter_mut()
-            .find(|c| c.message_index == message_index);
-        match entry {
-            Some(cp) => {
-                if cp.files.iter().any(|f| f.path == path) {
-                    return;
-                }
-                cp.files.push(FileSnapshot {
-                    path: path.to_string(),
-                    original_content,
-                });
-            }
-            None => {
-                checkpoints.push(TurnCheckpoint {
-                    message_index,
-                    files: vec![FileSnapshot {
-                        path: path.to_string(),
-                        original_content,
-                    }],
-                });
-            }
+        if let Ok(mut checkpoints) = self.file_checkpoints.lock() {
+            record_into_checkpoints(&mut checkpoints, message_index, path, original_content);
         }
+    }
+
+    /// Note the message index a chat's turn started at, so its checkpoints can be filed under
+    /// the right message even when that chat is not the live one.
+    pub fn set_turn_checkpoint_index(&self, conversation_id: &str, message_index: usize) {
+        if let Ok(mut map) = self.turn_checkpoint_index.lock() {
+            map.insert(conversation_id.to_string(), message_index);
+        }
+    }
+
+    pub fn turn_checkpoint_index_for(&self, conversation_id: &str) -> Option<usize> {
+        self.turn_checkpoint_index
+            .lock()
+            .ok()
+            .and_then(|map| map.get(conversation_id).copied())
     }
 
     pub fn file_checkpoints_snapshot(&self) -> Vec<TurnCheckpoint> {

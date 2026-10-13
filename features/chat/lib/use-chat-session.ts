@@ -855,6 +855,10 @@ export function useChatSession(
     /** Sends currently awaiting the backend. A counter, so overlapping sends cannot clear each other. */
     const sendsInFlightRef = React.useRef(0);
     const skipQueueDrainRef = React.useRef(false);
+    // Set when a send to a chat failed. The queue for that chat then waits for the next
+    // successful send, so a failing message is not re-sent in a loop, while the view still
+    // ends its optimistic turn instead of showing a loading state forever.
+    const failedSendHoldRef = React.useRef<{ conversationId: string | null } | null>(null);
     const forceSendRef = React.useRef(false);
 
     /**
@@ -935,6 +939,11 @@ export function useChatSession(
      * typing a new message, and any pending attachments belong to that message, not the
      * queued one.
      */
+    const holdQueueAfterFailedSend = (conversationId: string | null) => {
+        failedSendHoldRef.current = { conversationId };
+        stopLiveTurn();
+    };
+
     const sendMessageNow = async (
         messageContent: string,
         fromQueue: boolean,
@@ -1040,14 +1049,16 @@ export function useChatSession(
             }
 
         setSendError(null);
-        appendUserOptimistic(userMsg, target);
+        // Lets the backend's chat_started name this send, so a draft binds only to its own turn.
+        const clientRequestId = crypto.randomUUID();
+        appendUserOptimistic(userMsg, target, clientRequestId);
         if (!fromQueue) setUploadedFiles([]);
 
         try {
             if (!shapeAuth.loggedIn || !shapeAuth.accessToken) {
                 setSendError("Sign in to Shape to chat.");
                 // The optimistic turn was opened above; no backend turn will ever close it.
-                stopLiveTurn();
+                holdQueueAfterFailedSend(target);
                 setMessages((prev) => {
                     const last = prev[prev.length - 1];
                     if (last?.role === "assistant" && !last.content.trim()) {
@@ -1139,8 +1150,10 @@ export function useChatSession(
                 subagentSend.models,
                 subagentSend.defaultModel,
                 target,
+                clientRequestId,
             );
             await refreshMetadata();
+            failedSendHoldRef.current = null;
             return true;
         } catch (err) {
             console.error("Failed to send message:", err);
@@ -1151,6 +1164,8 @@ export function useChatSession(
             });
             const errMsg = err instanceof Error ? err.message : String(err);
             setSendError(errMsg);
+            // The send failed before any backend turn closed the optimistic one.
+            holdQueueAfterFailedSend(target);
             setMessages((prev) => {
                 if (prev.length < 1) return prev;
                 const last = prev[prev.length - 1];
@@ -1267,7 +1282,10 @@ export function useChatSession(
             !canDrainQueue({
                 isLoading,
                 sendsInFlight: sendsInFlightRef.current,
-                skipDrain: skipQueueDrainRef.current,
+                skipDrain:
+                    skipQueueDrainRef.current ||
+                    (failedSendHoldRef.current !== null &&
+                        failedSendHoldRef.current.conversationId === conversationId),
             })
         ) {
             return;

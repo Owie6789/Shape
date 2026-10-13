@@ -546,18 +546,42 @@ pub(super) async fn gate_edit_approval(
 /// Snapshot a file's pre-edit state the first time this turn touches it, and
 /// persist it immediately so a crash mid-turn does not lose the checkpoint.
 pub(super) fn record_checkpoint(ctx: &ToolCtx<'_>, path: &str, original_content: Option<String>) {
-    // The live checkpoint list is indexed by the live chat's messages. A turn for a background
-    // chat has different indexes, so recording it here would corrupt the chat on screen.
-    if let Some(conv_id) = ctx.conversation_id.as_deref().filter(|s| !s.is_empty()) {
-        let live = ctx.agent_state.current_conversation_id.lock().ok().and_then(|g| g.clone());
-        if live.as_deref() != Some(conv_id) {
-            return;
+    let conv_id = ctx.conversation_id.as_deref().filter(|s| !s.is_empty());
+    let live = ctx
+        .agent_state
+        .current_conversation_id
+        .lock()
+        .ok()
+        .and_then(|g| g.clone());
+    match conv_id {
+        // The chat on screen: its list is in memory and saved to its file.
+        Some(conv) if live.as_deref() == Some(conv) => {
+            let message_index = ctx.agent_state.current_turn_index();
+            ctx.agent_state
+                .record_file_checkpoint(message_index, path, original_content);
+            checkpoints::save_checkpoints(conv, &ctx.agent_state.file_checkpoints_snapshot());
         }
-    }
-    let message_index = ctx.agent_state.current_turn_index();
-    ctx.agent_state.record_file_checkpoint(message_index, path, original_content);
-    if let Some(conv_id) = ctx.conversation_id.as_deref().filter(|s| !s.is_empty()) {
-        checkpoints::save_checkpoints(conv_id, &ctx.agent_state.file_checkpoints_snapshot());
+        // A background chat: file the snapshot under its own turn index in its own file.
+        // The live list belongs to another chat and is left alone.
+        Some(conv) => {
+            let Some(message_index) = ctx.agent_state.turn_checkpoint_index_for(conv) else {
+                return;
+            };
+            let mut list = checkpoints::load_checkpoints(conv);
+            crate::agent::models::record_into_checkpoints(
+                &mut list,
+                message_index,
+                path,
+                original_content,
+            );
+            checkpoints::save_checkpoints(conv, &list);
+        }
+        // No chat id on this turn: only the live chat can hold it.
+        None => {
+            let message_index = ctx.agent_state.current_turn_index();
+            ctx.agent_state
+                .record_file_checkpoint(message_index, path, original_content);
+        }
     }
 }
 

@@ -54,6 +54,7 @@ pub async fn send_chat_message(
     subagent_models: Option<Vec<String>>,
     subagent_default_model: Option<String>,
     conversation_id: Option<String>,
+    client_request_id: Option<String>,
     state: tauri::State<'_, AgentState>,
     app_state: tauri::State<'_, AppState>,
     index_state: tauri::State<'_, crate::agent::index::IndexState>,
@@ -241,6 +242,13 @@ pub async fn send_chat_message(
     // history after this point, so this turn must build its context from its own snapshot.
     let turn_base_history = state.history.lock()?.clone();
     let turn_incognito = state.incognito();
+    // The summary belongs to this chat. Read it with the snapshot, not from the shared slot.
+    let turn_base_summary = state.history_summary.lock()?.clone();
+    // The message index this turn's checkpoints are filed under, if the chat is not live later.
+    state.set_turn_checkpoint_index(
+        &owned_conversation_id,
+        turn_base_history.len().saturating_sub(1),
+    );
 
     // Mid-chat model switch: prior turns may carry a different family.
     let switch_hint = {
@@ -365,6 +373,7 @@ pub async fn send_chat_message(
         json!({
             "turnId": &turn_id,
             "conversationId": &owned_conversation_id,
+            "requestId": &client_request_id,
             "title": &provisional_title,
             "model": &model_to_use,
             "usedAuto": selected_auto,
@@ -475,10 +484,11 @@ pub async fn send_chat_message(
     // Mode instructions and workspace context ride on the latest user message.
     let final_system_prompt = prompt_parts.join("\n");
 
+    let mut turn_summary = turn_base_summary;
     let history_snapshot = {
         let mut snapshot = turn_base_history.clone();
         if messages::history_char_count(&snapshot) > messages::HISTORY_CHAR_BUDGET {
-            let existing = state.history_summary.lock()?.clone();
+            let existing = turn_summary.clone();
             let middle = messages::slice_for_compression(&snapshot);
             if !middle.is_empty() {
                 let spill_note = crate::agent::tools::spill::spill_history_transcript(
@@ -511,7 +521,13 @@ pub async fn send_chat_message(
                         ),
                         None => merged,
                     };
-                    *state.history_summary.lock()? = Some(merged.clone());
+                    turn_summary = Some(merged.clone());
+                    // The shared slot is the live chat's. Only the live chat may update it.
+                    if state.current_conversation_id.lock()?.as_deref()
+                        == Some(owned_conversation_id.as_str())
+                    {
+                        *state.history_summary.lock()? = Some(merged.clone());
+                    }
                     snapshot = messages::apply_summary(&snapshot, Some(&merged));
                     logging::info("chat", "Compressed older chat history into summary");
                     let _ = app_handle.emit(
@@ -569,7 +585,7 @@ pub async fn send_chat_message(
     let tools = schema::apply_steer_packs(schema::stable_tools(family), &steer);
     let mcp_tokens: u64 = 0;
 
-    let summarized = state.history_summary.lock().ok().and_then(|g| g.clone());
+    let summarized = turn_summary.clone();
     let conversation_json =
         serde_json::to_string(&messages::build_api_history(&history_snapshot)).unwrap_or_default();
     let mut breakdown = build_context_breakdown(
