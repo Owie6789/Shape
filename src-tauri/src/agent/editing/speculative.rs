@@ -15,7 +15,6 @@
 /// 3. Trailing-whitespace-insensitive line match
 /// 4. Unique first+last line anchor (for 3+ line blocks)
 /// If no match or ambiguous match, returns an Error with feedback for the model.
-
 pub fn resolve(original_text: &str, code_edit_text: &str) -> Result<String, String> {
     let original_text = original_text.replace("\r\n", "\n");
     let code_edit_text = strip_edit_fences(&code_edit_text.replace("\r\n", "\n"));

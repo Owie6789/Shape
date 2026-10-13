@@ -33,7 +33,7 @@ pub fn get_chat_history(
     let proj_path = app_state.0.lock()?.project_path.clone();
     let mut current_project_lock = state.current_project.lock()?;
 
-    if !history::project_paths_equal(&proj_path, &*current_project_lock) {
+    if !history::project_paths_equal(&proj_path, &current_project_lock) {
         logging::info(
             "chat",
             &format!(

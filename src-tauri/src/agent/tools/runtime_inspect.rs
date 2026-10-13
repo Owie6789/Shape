@@ -304,6 +304,7 @@ async fn spawn_and_inspect(target_url: &str) -> Result<String, String> {
 }
 
 pub(crate) fn find_chromium() -> Option<String> {
+    #[allow(unused_mut)]
     let mut candidates: Vec<PathBuf> = Vec::new();
     #[cfg(windows)]
     {

@@ -985,19 +985,29 @@ pub async fn open_file(
 
     let mut state = state.0.lock()?;
 
-    let mut normalized_request = path.replace("\\", "/");
-    #[cfg(target_os = "windows")]
-    {
-        normalized_request = normalized_request.to_lowercase();
-    }
+    let normalized_request = {
+        #[cfg(target_os = "windows")]
+        {
+            path.replace("\\", "/").to_lowercase()
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            path.replace("\\", "/")
+        }
+    };
 
     let mut existing_path = None;
     for f in &state.open_files {
-        let mut f_normalized = f.path.replace("\\", "/");
-        #[cfg(target_os = "windows")]
-        {
-            f_normalized = f_normalized.to_lowercase();
-        }
+        let f_normalized = {
+            #[cfg(target_os = "windows")]
+            {
+                f.path.replace("\\", "/").to_lowercase()
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                f.path.replace("\\", "/")
+            }
+        };
 
         if f_normalized == normalized_request {
             existing_path = Some(f.path.clone());

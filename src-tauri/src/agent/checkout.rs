@@ -61,10 +61,8 @@ fn sanitize_slug(slug: &str) -> String {
     for ch in slug.chars().flat_map(|c| c.to_lowercase()) {
         if ch.is_ascii_alphanumeric() {
             out.push(ch);
-        } else if ch == '-' || ch == '_' || ch.is_whitespace() {
-            if !out.ends_with('-') {
-                out.push('-');
-            }
+        } else if (ch == '-' || ch == '_' || ch.is_whitespace()) && !out.ends_with('-') {
+            out.push('-');
         }
         if out.len() >= 24 {
             break;

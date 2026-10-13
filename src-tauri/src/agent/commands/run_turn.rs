@@ -649,7 +649,7 @@ pub async fn run_agent_turn(mut config: AgentTurnConfig<'_>) -> Result<AgentTurn
         }
 
         // Reset the UI activity label: we're back in the model, not a tool.
-        streaming::emit_chat_status(&config.app_handle, json!({ "phase": "model" }));
+        streaming::emit_chat_status(config.app_handle, json!({ "phase": "model" }));
 
         let outcome = match streaming::stream_chat_with_retry(
             config.client,
@@ -701,7 +701,7 @@ pub async fn run_agent_turn(mut config: AgentTurnConfig<'_>) -> Result<AgentTurn
                     "Provider finish_reason=error with no tool calls — retrying once with tools",
                 );
                 streaming::emit_chat_status(
-                    &config.app_handle,
+                    config.app_handle,
                     json!({ "phase": "model", "label": "Retrying after model error" }),
                 );
                 continue;
@@ -716,17 +716,16 @@ pub async fn run_agent_turn(mut config: AgentTurnConfig<'_>) -> Result<AgentTurn
         if !outcome.content.is_empty() {
             // Final answers always land in the reply. Brief mid-tool checkpoints
             // (Cursor-style sanity notes) also surface; long essays stay API-only.
-            if outcome.tool_calls.is_empty() || streaming::is_brief_checkpoint(&outcome.content) {
-                if !is_repeat_prose(&final_full_response, &outcome.content)
-                    && !is_redundant_coda(&final_full_response, &outcome.content)
-                {
-                    if !outcome.tool_calls.is_empty() && !final_full_response.ends_with('\n') {
-                        final_full_response.push('\n');
-                    }
-                    final_full_response.push_str(&outcome.content);
-                    if !outcome.tool_calls.is_empty() {
-                        final_full_response.push_str("\n\n");
-                    }
+            if (outcome.tool_calls.is_empty() || streaming::is_brief_checkpoint(&outcome.content))
+                && !is_repeat_prose(&final_full_response, &outcome.content)
+                && !is_redundant_coda(&final_full_response, &outcome.content)
+            {
+                if !outcome.tool_calls.is_empty() && !final_full_response.ends_with('\n') {
+                    final_full_response.push('\n');
+                }
+                final_full_response.push_str(&outcome.content);
+                if !outcome.tool_calls.is_empty() {
+                    final_full_response.push_str("\n\n");
                 }
             }
         }
@@ -782,7 +781,7 @@ pub async fn run_agent_turn(mut config: AgentTurnConfig<'_>) -> Result<AgentTurn
                     "content": nudge,
                 }));
                 streaming::emit_chat_status(
-                    &config.app_handle,
+                    config.app_handle,
                     json!({ "phase": "model", "label": "Continuing" }),
                 );
                 continue;
@@ -873,7 +872,7 @@ pub async fn run_agent_turn(mut config: AgentTurnConfig<'_>) -> Result<AgentTurn
 
             if tool_calls[0].name != "decide" {
                 streaming::emit_chat_status(
-                    &config.app_handle,
+                    config.app_handle,
                     json!({ "phase": "tool", "tool": tool_calls[0].name }),
                 );
             }
@@ -1066,7 +1065,7 @@ pub async fn run_agent_turn(mut config: AgentTurnConfig<'_>) -> Result<AgentTurn
                 } else {
                     json!({ "phase": "tool", "tool": call.name })
                 };
-                streaming::emit_chat_status(&config.app_handle, tool_status);
+                streaming::emit_chat_status(config.app_handle, tool_status);
             }
 
             if call.name == "read_file" {

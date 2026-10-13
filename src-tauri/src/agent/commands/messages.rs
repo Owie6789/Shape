@@ -226,8 +226,7 @@ pub fn build_api_history(history: &[ChatMessage]) -> Vec<ChatMessage> {
 fn strip_think_blocks(content: &str) -> String {
     let mut out = content.to_string();
     for (open, close) in [("<think", "</think>"), ("<thought", "</thought>")] {
-        loop {
-            let Some(start) = out.find(open) else { break };
+        while let Some(start) = out.find(open) {
             let after_gt = out[start..]
                 .find('>')
                 .map(|i| start + i + 1)
@@ -256,10 +255,7 @@ fn strip_tool_markup_for_api(content: &str) -> String {
         ("<records_table", "</records_table>", "[records]"),
         ("<stat_cards", "</stat_cards>", "[stats]"),
     ] {
-        loop {
-            let Some(start) = content.find(open) else {
-                break;
-            };
+        while let Some(start) = content.find(open) {
             let Some(rel) = content[start..].find(close) else {
                 content.replace_range(start.., placeholder);
                 break;

@@ -44,12 +44,24 @@ impl LlmProvider {
     }
 }
 
+fn floor_char_boundary(s: &str, index: usize) -> usize {
+    if index >= s.len() {
+        s.len()
+    } else {
+        let mut i = index;
+        while i > 0 && !s.is_char_boundary(i) {
+            i -= 1;
+        }
+        i
+    }
+}
+
 fn llm_http_error(provider: &LlmProvider, status: reqwest::StatusCode, text: &str) -> String {
     format!(
         "{} API error {}: {}",
         provider.label(),
         status,
-        &text[..text.floor_char_boundary(800)]
+        &text[..floor_char_boundary(text, 800)]
     )
 }
 
@@ -207,7 +219,7 @@ pub(crate) fn is_brief_checkpoint(text: &str) -> bool {
         return false;
     }
     let len = trimmed.chars().count();
-    if len < 160 || len > 900 {
+    if !(160..=900).contains(&len) {
         return false;
     }
     let lines = trimmed.lines().filter(|l| !l.trim().is_empty()).count();
@@ -311,6 +323,7 @@ pub struct StreamOutcome {
 /// Emits `chat_token` events to the UI for both regular content and `<think>` blocks
 /// (the latter wraps streamed reasoning tokens). Returns the accumulated content,
 /// any structured tool calls, and the finish reason.
+#[allow(clippy::too_many_arguments)]
 pub async fn stream_chat(
     client: &Client,
     api_key: &str,
@@ -402,8 +415,10 @@ pub async fn stream_chat(
         ),
     );
 
-    let mut retry_strategy = backoff::ExponentialBackoff::default();
-    retry_strategy.max_elapsed_time = Some(std::time::Duration::from_secs(30));
+    let retry_strategy = backoff::ExponentialBackoff {
+        max_elapsed_time: Some(std::time::Duration::from_secs(30)),
+        ..Default::default()
+    };
 
     let resp = backoff::future::retry(retry_strategy, || async {
         if token.is_cancelled() {
@@ -456,7 +471,7 @@ pub async fn stream_chat(
             &format!(
                 "API error {}: {}",
                 status,
-                &text[..text.floor_char_boundary(500)]
+                &text[..floor_char_boundary(text, 500)]
             ),
         );
 
@@ -516,25 +531,23 @@ pub async fn stream_chat(
     let mut leaked_calls: Vec<ParsedLeakCall> = Vec::new();
     let mut announced_tool_name: Option<String> = None;
 
-    while let Some(chunk_result) = {
-        tokio::select! {
-            biased;
-            _ = token.cancelled() => {
-                logging::info("stream", "Cancelled by user during stream");
-                return Ok(StreamOutcome {
-                    content,
-                    tool_calls: Vec::new(),
-                    finish_reason,
-                    token_count,
-                    input_tokens,
-                    output_tokens,
-                    had_reasoning,
-                    reasoning: nonempty_string(reasoning_acc.clone()),
-                    reasoning_details: nonempty_details(&reasoning_details_acc),
-                });
-            }
-            next = stream.next() => next,
+    while let Some(chunk_result) = tokio::select! {
+        biased;
+        _ = token.cancelled() => {
+            logging::info("stream", "Cancelled by user during stream");
+            return Ok(StreamOutcome {
+                content,
+                tool_calls: Vec::new(),
+                finish_reason,
+                token_count,
+                input_tokens,
+                output_tokens,
+                had_reasoning,
+                reasoning: nonempty_string(reasoning_acc.clone()),
+                reasoning_details: nonempty_details(&reasoning_details_acc),
+            });
         }
+        next = stream.next() => next,
     } {
         if token.is_cancelled() {
             logging::info("stream", "Cancelled by user during stream");
@@ -929,6 +942,7 @@ fn nonempty_details(details: &[Value]) -> Option<Value> {
 /// OpenRouter occasionally returns a 200 with zero content and zero tool_calls (transient
 /// upstream hiccup). The pre-refactor code treated this as "model is done" and silently
 /// ended the conversation — masking the failure. We retry once before bubbling up.
+#[allow(clippy::too_many_arguments)]
 pub async fn stream_chat_with_retry(
     client: &Client,
     api_key: &str,
@@ -1098,7 +1112,7 @@ pub async fn complete_chat_cancellable(
 
     logging::debug(
         "complete",
-        &format!("Result: {}", &content[..content.floor_char_boundary(80)]),
+        &format!("Result: {}", &content[..floor_char_boundary(content, 80)]),
     );
     Ok(content)
 }

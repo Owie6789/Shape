@@ -2,6 +2,8 @@
 //! Chromium's web speech API fails inside WebView2 (`network`), so dictation
 //! uses the system recognizer instead.
 
+#![allow(dead_code)]
+
 #[cfg(windows)]
 pub fn allow_microphone(app: &tauri::AppHandle) {
     use tauri::Manager;

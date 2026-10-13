@@ -1,6 +1,8 @@
 //! WebView2 DevTools endpoint for the in-app inspector.
 //! Loopback only, one port per process, and not open to every website origin.
 
+#![allow(dead_code)]
+
 use std::sync::OnceLock;
 
 static PORT: OnceLock<u16> = OnceLock::new();

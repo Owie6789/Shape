@@ -7,7 +7,6 @@
 /// Families drive per-model prompt overlays and tool shapes (Cursor-style harness
 /// customization): OpenAI-trained models prefer apply_patch; Anthropic/DeepSeek
 /// prefer SEARCH/REPLACE string edits.
-
 /** Fast included model used for Auto and auxiliary work (titles, explore, etc.). */
 pub const MODEL_FAST: &str = "deepseek/deepseek-v4-flash";
 

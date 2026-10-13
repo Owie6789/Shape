@@ -29,6 +29,7 @@ const MODEL_DEFAULT: &str = "auto";
 const MODEL_TITLE_GEN: &str = "auto";
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn send_chat_message(
     message: String,
     model: Option<String>,
@@ -541,10 +542,10 @@ pub async fn send_chat_message(
     turn_context.push_str("\n\nCURRENT CONTEXT:\n");
     turn_context.push_str(&context_string);
     if !steer.hint.is_empty() {
-        turn_context.push_str("\n");
+        turn_context.push('\n');
         turn_context.push_str(&steer.hint);
     }
-    turn_context.push_str("\n");
+    turn_context.push('\n');
     turn_context.push_str(&crate::agent::subagents::policy_line(&state));
     messages::append_turn_context(&mut api_messages, &turn_context);
 
@@ -605,10 +606,10 @@ pub async fn send_chat_message(
         mode: &mode_to_use,
         project_path: &project_path,
         app_handle: &app_handle,
-        agent_state: &*state,
-        index_state: Some(&*index_state),
-        mcp_state: Some(&*mcp_state),
-        pty_state: Some(&*pty_state),
+        agent_state: &state,
+        index_state: Some(&index_state),
+        mcp_state: Some(&mcp_state),
+        pty_state: Some(&pty_state),
         cancel: cancel.clone(),
         proxy_ctx: proxy_base.clone(),
         max_loops: run_turn::max_loops_for_mode(&mode_to_use),

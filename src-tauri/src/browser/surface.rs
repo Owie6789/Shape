@@ -3,10 +3,13 @@
 //! frame load sites that send `X-Frame-Options` or a tight `frame-ancestors`.
 //! The agent's browser is a separate headless process and does not come through here.
 
+#![allow(dead_code)]
+#![allow(unused_imports)]
+
 use std::sync::Mutex;
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 
 const FRAME_NAME: &str = "shape-browser";
 const TOOLS_NAME: &str = "shape-devtools";
