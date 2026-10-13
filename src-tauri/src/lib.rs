@@ -16,7 +16,6 @@
 #![allow(clippy::let_unit_value)]
 #![allow(clippy::manual_strip)]
 #![allow(clippy::question_mark)]
-#![allow(clippy::to_string)]
 #![allow(clippy::collapsible_match)]
 #![allow(clippy::derivable_impls)]
 #![allow(clippy::ptr_arg)]
@@ -35,7 +34,6 @@
 #![allow(clippy::enum_variant_names)]
 #![allow(clippy::module_name_repetitions)]
 #![allow(clippy::similar_names)]
-#![allow(clippy::too_many_lines)]
 // Allow all pedantic and nursery for now to unblock CI, will tighten later
 #![allow(clippy::pedantic)]
 #![allow(clippy::nursery)]
@@ -43,6 +41,7 @@
 #![allow(clippy::style)]
 #![allow(clippy::complexity)]
 #![allow(clippy::perf)]
+#![allow(unknown_lints)]
 
 mod agent;
 mod app_state;
