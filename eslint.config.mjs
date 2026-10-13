@@ -5,10 +5,6 @@ import nextTs from "eslint-config-next/typescript";
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
-  // Build artifacts of `npm run build:runtime` (esbuild, minified) and the
-  // vendored Tailwind browser build copied next to them. Linting generated
-  // output only produces noise that hides real findings in source.
-  globalIgnores(["src-tauri/runtime/**", "public/preview/**"]),
   {
     // CommonJS build tooling, run directly by node — `require` is correct here.
     files: ["src-tauri/scripts/**/*.js", "scripts/**/*.mjs"],
@@ -28,6 +24,11 @@ const eslintConfig = defineConfig([
     "src-tauri/scripts/**",
     // Generated docs search index
     "docs/generated/**",
+    // Generated preview runtime bundles (esbuild output)
+    "src-tauri/runtime/**",
+    "public/preview/**",
+    // Coverage
+    "coverage/**",
   ]),
 ]);
 
