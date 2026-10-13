@@ -21,6 +21,13 @@ DO NOT apply this to your internal reasoning process. Only apply these rules to 
 
 Removing patterns is half the job. Sterile, voiceless writing is just as obvious.
 
+These rules are conditional on the source. Match the register you were given.
+Technical documentation, reference material, changelogs, and anything the
+author wrote in a neutral or formal voice get the pattern removal only. Do not
+add opinions, informal reactions, first person, or deliberate mess to text that
+did not ask for them, and do not let a looser rhythm introduce an inaccuracy.
+Keep rhythm variation where the source already has it.
+
 - **Have opinions.** React to facts instead of neutrally listing pros and cons.
 - **Vary rhythm.** Short sentences. Then longer ones that take their time. Mix it up.
 - **Acknowledge complexity.** "Impressive but also kind of unsettling" beats "impressive."

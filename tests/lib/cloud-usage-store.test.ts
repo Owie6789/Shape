@@ -9,7 +9,11 @@ import {
 } from "@/lib/cloud/store";
 import { checkUsage } from "@/lib/cloud/api";
 import type { AccountSummary } from "@/lib/cloud/account";
-import { USAGE_STALE_MS, type UsageSnapshot } from "@/lib/cloud/usage";
+import {
+    isUsageStale,
+    USAGE_STALE_MS,
+    type UsageSnapshot,
+} from "@/lib/cloud/usage";
 
 const ACCOUNT: AccountSummary = {
     id: "user-1",
@@ -317,6 +321,57 @@ describe("cloud usage store fast path", () => {
         expect(getShapeAuthState().loggedIn).toBe(true);
         expect(getShapeAuthState().creditsRemaining).toBe(999);
         expect(getShapeAuthState().accessToken).toBe("token-2");
+    });
+
+    it("stamps a confirmation a usage check returned even when nothing moved", async () => {
+        await signIn();
+        const before = getShapeAuthState().usageUpdatedAt ?? 0;
+        vi.useFakeTimers();
+        vi.setSystemTime(before + USAGE_STALE_MS + 1000);
+
+        // The server just agreed with the balance we already had, so the merge
+        // finds no field to change. The confirmation still happened, and the
+        // figures must not read as stale one tick later.
+        applyUsageCheckResult({ allowed: true, creditsRemaining: 1200, tier: "pro" });
+
+        expect(getShapeAuthState().creditsRemaining).toBe(1200);
+        expect(getShapeAuthState().usageUpdatedAt).toBeGreaterThan(before);
+        expect(isUsageStale(getShapeAuthState().usageUpdatedAt, Date.now())).toBe(false);
+        vi.useRealTimers();
+    });
+
+    it("does not let an in-flight account response roll back a newer usage check", async () => {
+        await signIn();
+
+        let release: (() => void) | undefined;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        let accountStarted = false;
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (input: RequestInfo | URL) => {
+                const url = String(input);
+                if (/\/api\/account(?!\/)/.test(url)) {
+                    accountStarted = true;
+                    await gate;
+                    // This response left the server before the check below landed.
+                    return jsonReply({ ...ACCOUNT, creditsRemaining: 400 });
+                }
+                return jsonReply({});
+            }),
+        );
+
+        const pending = refreshShapeAuth();
+        await vi.waitFor(() => expect(accountStarted).toBe(true));
+
+        // A usage check confirms a newer balance while that request is in flight.
+        applyUsageCheckResult({ allowed: true, creditsRemaining: 900, tier: "pro" });
+
+        release?.();
+        await pending;
+
+        expect(getShapeAuthState().creditsRemaining).toBe(900);
     });
 
     it("rebroadcasts a snapshot it produced itself so other windows catch up", async () => {

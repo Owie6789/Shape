@@ -291,7 +291,21 @@ export function applyUsageSnapshot(
 
 /** Numbers from a `/api/usage/check` call — already paid for, so never dropped. */
 export function applyUsageCheckResult(check: UsageCheckResult): void {
-  applyUsageSnapshot(usageSnapshotFromCheck(state, check));
+  const snapshot = usageSnapshotFromCheck(state, check);
+  if (applyUsageSnapshot(snapshot)) return;
+  // Nothing moved, but the server did just confirm the balance. Without this
+  // stamp a check that agrees with what we already had would leave the figures
+  // looking older than they are, and the staleness marker would fire on data
+  // that was confirmed moments ago.
+  if (
+    state.loggedIn
+    && typeof snapshot.creditsRemaining === "number"
+    && Number.isFinite(snapshot.creditsRemaining)
+  ) {
+    const at = Date.now();
+    setState({ usageUpdatedAt: at });
+    patchCachedProfile({ creditsRemaining: snapshot.creditsRemaining });
+  }
 }
 
 function broadcastUsageChange(snapshot: UsageSnapshot) {
@@ -343,7 +357,11 @@ function applyCachedProfile(token: string, profile: CachedProfile) {
 }
 
 async function saveToken(token: string | null) {
-  // Every token change invalidates in-flight account fetches.
+  // Every token change invalidates in-flight account fetches, including a
+  // rotation. The retry after a rotation is a fresh applyToken() call that
+  // re-reads this counter, so it is never dropped. What the bump does catch is
+  // a load that was captured against the pre-rotation token: letting that one
+  // land would write the superseded token back over the one we just minted.
   sessionGeneration += 1;
   try {
     if (token) localStorage.setItem(STORAGE_KEY, token);
@@ -513,11 +531,19 @@ async function applyToken(token: string | null, allowRefresh = true) {
     });
   }
 
+  const requestStartedAt = Date.now();
+
   try {
     const account = await fetchAccount(token);
-    // Signed out, or the token rotated, while this was in flight. Writing now
+    // Signed out, or the session changed, while this was in flight. Writing now
     // would resurrect a session the user has already left.
     if (generation !== sessionGeneration) return;
+    // A usage check can confirm a newer balance while this request was in
+    // flight. The scheduler only serialises account loads against each other,
+    // so without this the older response would roll the balance back.
+    const usageMovedDuringRequest =
+      typeof state.usageUpdatedAt === "number"
+      && state.usageUpdatedAt > requestStartedAt;
     saveCachedProfile({
       userId: account.id,
       email: account.email,
@@ -539,17 +565,28 @@ async function applyToken(token: string | null, allowRefresh = true) {
       userId: account.id,
       email: account.email,
       name: account.name,
-      tier: account.tier,
-      creditsRemaining: account.creditsRemaining,
-      creditsIncluded: account.creditsIncluded,
-      freeAutoPercent: account.freeAutoPercent,
-      currentPeriodEnd: account.currentPeriodEnd ?? null,
-      usageUpdatedAt: Date.now(),
+      // Keep the newer figures a usage check confirmed mid-request.
+      tier: usageMovedDuringRequest ? state.tier : account.tier,
+      creditsRemaining: usageMovedDuringRequest
+        ? state.creditsRemaining
+        : account.creditsRemaining,
+      creditsIncluded: usageMovedDuringRequest
+        ? state.creditsIncluded
+        : account.creditsIncluded,
+      freeAutoPercent: usageMovedDuringRequest
+        ? state.freeAutoPercent
+        : account.freeAutoPercent,
+      currentPeriodEnd: usageMovedDuringRequest
+        ? state.currentPeriodEnd
+        : account.currentPeriodEnd ?? null,
+      usageUpdatedAt: usageMovedDuringRequest ? state.usageUpdatedAt : Date.now(),
       accessToken: token,
     });
     // Other Shape windows hold their own copy of this store — hand them the
     // numbers we just paid for instead of leaving them on the cached profile.
-    broadcastUsageChange(usageSnapshotFromAccount(account));
+    if (!usageMovedDuringRequest) {
+      broadcastUsageChange(usageSnapshotFromAccount(account));
+    }
     void identifyTelemetryUser(account.id, { tier: account.tier });
     void Promise.all([import("@/lib/settings"), import("@/lib/telemetry")]).then(
       ([{ getSettings }, { applyTelemetryPreference }]) => {

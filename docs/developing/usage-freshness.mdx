@@ -36,8 +36,8 @@ The snapshot is reduced by `mergeUsageSnapshot()` to the fields that actually di
 
 Every refresh goes through `UsageRefreshScheduler`. It does two things at once:
 
-- **Coalesces.** `refreshShapeUsage()` debounces, so five agent turns finishing in a row cost one `/api/account` call rather than five.
-- **Serialises.** Each load starts only after the previous one settles, so a slow response can never overwrite a newer one.
+- **Coalesces.** `refreshShapeUsage()` debounces over `USAGE_REFRESH_DEBOUNCE_MS` (800ms), so a burst of agent turns finishing inside that window costs one `/api/account` call rather than one each. Turns further apart than the window do each get their own call; if one is already in flight when another lands, at most one follow-up queues behind it.
+- **Serialises account loads.** Each `/api/account` load starts only after the previous one settles, so a slow account response cannot overwrite a newer account response. This guarantee covers account loads only. A `/api/usage/check` result reaches the store on its own path, so `applyToken()` compares `usageUpdatedAt` against the moment its request started and keeps the newer figures rather than rolling them back.
 
 `refreshShapeAuth()` skips the debounce for the cases that mean *now*: the Settings → Refresh button and regaining connectivity.
 
