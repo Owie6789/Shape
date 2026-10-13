@@ -133,7 +133,11 @@ export async function fetchAccount(token: string) {
   return shapeApiFetch<AccountSummary>("/account", { token });
 }
 
-export async function checkUsage(token: string, model: string) {
+export async function checkUsage(
+  token: string,
+  model: string,
+  userId?: string | null,
+) {
   const cacheKey = `${token}:${model}`;
   const now = Date.now();
   const cached = usageCheckCache.get(cacheKey);
@@ -155,7 +159,9 @@ export async function checkUsage(token: string, model: string) {
       // The check just measured the account — feed those numbers straight to the
       // usage surfaces instead of waiting for the next account poll.
       void import("./store")
-        .then(({ applyUsageCheckResult }) => applyUsageCheckResult(result))
+        .then(({ applyUsageCheckResult }) =>
+          applyUsageCheckResult(result, userId),
+        )
         .catch(() => undefined);
       return result;
     })

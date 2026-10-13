@@ -42,6 +42,11 @@ export type UsageSnapshotFields = {
 
 export type UsageSnapshot = UsageSnapshotFields & {
   source?: UsageSnapshotSource;
+  /**
+   * Account the figures belong to. Snapshots travel between windows and back
+   * from in-flight requests, so a session change has to be detectable.
+   */
+  userId?: string;
   /** Producer clock, ms epoch. Informational — clocks differ between windows. */
   at?: number;
   /** Producer-local monotonic counter. */
@@ -111,6 +116,7 @@ export function usageSnapshotFromAccount(account: AccountSummary): UsageSnapshot
     freeAutoPercent: account.freeAutoPercent ?? null,
     currentPeriodEnd: account.currentPeriodEnd ?? null,
     source: "account",
+    userId: account.id,
   };
 }
 

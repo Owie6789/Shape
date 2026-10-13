@@ -374,6 +374,103 @@ describe("cloud usage store fast path", () => {
         expect(getShapeAuthState().creditsRemaining).toBe(900);
     });
 
+    it("refuses a usage check that belongs to a different account", async () => {
+        await signIn();
+
+        // Issued for another account before the session switched over here.
+        applyUsageCheckResult(
+            { allowed: true, creditsRemaining: 730, tier: "pro" },
+            "user-2",
+        );
+
+        expect(getShapeAuthState().creditsRemaining).toBe(1200);
+    });
+
+    it("accepts the same check when the account matches", async () => {
+        await signIn();
+        applyUsageCheckResult(
+            { allowed: true, creditsRemaining: 730, tier: "pro" },
+            "user-1",
+        );
+        expect(getShapeAuthState().creditsRemaining).toBe(730);
+    });
+
+    it("drops a peer snapshot from another account", async () => {
+        await signIn();
+
+        expect(
+            applyUsageSnapshot({ creditsRemaining: 40, userId: "user-2" }),
+        ).toBe(false);
+        expect(getShapeAuthState().creditsRemaining).toBe(1200);
+    });
+
+    it("does not mark the whole snapshot fresh on a tier-only check", async () => {
+        await signIn();
+        const before = getShapeAuthState().usageUpdatedAt ?? 0;
+        vi.useFakeTimers();
+        vi.setSystemTime(before + USAGE_STALE_MS + 1000);
+
+        // The check measured the tier and nothing else, so the balance and the
+        // reset date are still as old as they were. Claiming otherwise would
+        // suppress the focus refresh meant to replace them.
+        applyUsageCheckResult({ allowed: true, tier: "enterprise" }, "user-1");
+
+        expect(getShapeAuthState().tier).toBe("enterprise");
+        expect(getShapeAuthState().usageUpdatedAt).toBe(before);
+        vi.useRealTimers();
+    });
+
+    it("drops an in-flight fetch when another window signs in as someone else", async () => {
+        await signIn();
+
+        let release: (() => void) | undefined;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        let accountStarted = false;
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+                const url = String(input);
+                if (/\/api\/account(?!\/)/.test(url)) {
+                    // The token tells the two requests apart: the gated one was
+                    // issued for token-1, the retry for token-2.
+                    const auth = String(
+                        new Headers(init?.headers).get("Authorization") ?? "",
+                    );
+                    if (auth.includes("token-1")) {
+                        accountStarted = true;
+                        await gate;
+                        return jsonReply({ ...ACCOUNT, email: "old@example.com" });
+                    }
+                    return jsonReply({ ...ACCOUNT, email: "new@example.com" });
+                }
+                return jsonReply({});
+            }),
+        );
+
+        const pending = refreshShapeAuth();
+        await vi.waitFor(() => expect(accountStarted).toBe(true));
+
+        // Not a sign-out this time: a different account, signed in elsewhere.
+        // The token is still non-null, so only a token comparison catches it.
+        localStorage.setItem("shape-auth-token", "token-2");
+        window.dispatchEvent(new CustomEvent("shape-auth-changed"));
+
+        // Let the new account land first, then release the stale response so it
+        // arrives last. Without the invalidation it would overwrite the account
+        // this window has already moved on to.
+        await vi.waitFor(() =>
+            expect(getShapeAuthState().email).toBe("new@example.com"),
+        );
+
+        release?.();
+        await pending;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getShapeAuthState().email).toBe("new@example.com");
+    });
+
     it("rebroadcasts a snapshot it produced itself so other windows catch up", async () => {
         await signIn();
         const { seen, restore } = watchUsageBroadcasts();

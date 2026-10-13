@@ -50,7 +50,7 @@ export function useTextRewrite(model = "auto") {
 
         setLoading(true);
         try {
-            const usageCheck = await checkUsage(token, model);
+            const usageCheck = await checkUsage(token, model, shapeAuth.userId);
             if (!usageCheck.allowed) {
                 notificationStore.add(usageCheck.reason ?? "Usage not allowed", "error", undefined, { autoHide: true });
                 return null;
@@ -77,7 +77,7 @@ export function useTextRewrite(model = "auto") {
         } finally {
             setLoading(false);
         }
-    }, [model, shapeAuth.accessToken, shapeAuth.loggedIn]);
+    }, [model, shapeAuth.accessToken, shapeAuth.loggedIn, shapeAuth.userId]);
 
     return { rewrite, loading, loggedIn: shapeAuth.loggedIn };
 }

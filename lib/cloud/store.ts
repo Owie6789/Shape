@@ -279,18 +279,43 @@ export function applyUsageSnapshot(
 ): boolean {
   const { broadcast = true } = opts;
   if (!state.loggedIn) return false;
+  // A snapshot from a different account is not ours to show. This catches a
+  // delayed peer event and an in-flight check that outlived a session change.
+  if (snapshot.userId && state.userId && snapshot.userId !== state.userId) {
+    return false;
+  }
 
   const patch = mergeUsageSnapshot(state, snapshot);
   if (!patch) return false;
 
-  setState({ ...patch, usageUpdatedAt: Date.now() });
+  // Only stamp what the response actually measured. An account response covers
+  // every field; a usage check covers the tier and sometimes the balance. Letting
+  // a tier-only check mark the whole snapshot fresh would keep a stale Auto
+  // percentage or reset date alive past the focus refresh that should replace it.
+  const confirmedUsage =
+    snapshot.source === "account"
+    || snapshot.creditsRemaining !== undefined
+    || snapshot.creditsIncluded !== undefined
+    || snapshot.freeAutoPercent !== undefined
+    || snapshot.currentPeriodEnd !== undefined;
+
+  setState({
+    ...patch,
+    usageUpdatedAt: confirmedUsage ? Date.now() : state.usageUpdatedAt,
+  });
   patchCachedProfile(patch);
   if (broadcast) broadcastUsageChange(snapshot);
   return true;
 }
 
 /** Numbers from a `/api/usage/check` call — already paid for, so never dropped. */
-export function applyUsageCheckResult(check: UsageCheckResult): void {
+export function applyUsageCheckResult(
+  check: UsageCheckResult,
+  userId?: string | null,
+): void {
+  // The check was issued for one account. If the session moved on before the
+  // response landed, these numbers belong to somebody else.
+  if (userId && state.userId && userId !== state.userId) return;
   const snapshot = usageSnapshotFromCheck(state, check);
   if (applyUsageSnapshot(snapshot)) return;
   // Nothing moved, but the server did just confirm the balance. Without this
@@ -311,11 +336,10 @@ export function applyUsageCheckResult(check: UsageCheckResult): void {
 function broadcastUsageChange(snapshot: UsageSnapshot) {
   if (typeof window === "undefined") return;
   usageSeq += 1;
-  const stamped = stampUsageSnapshot(snapshot, {
-    origin: usageOriginId,
-    seq: usageSeq,
-    at: Date.now(),
-  });
+  const stamped = stampUsageSnapshot(
+    { ...snapshot, userId: snapshot.userId ?? state.userId ?? undefined },
+    { origin: usageOriginId, seq: usageSeq, at: Date.now() },
+  );
   window.dispatchEvent(new CustomEvent(USAGE_EVENT, { detail: stamped }));
   void import("@tauri-apps/api/event")
     .then(({ emit }) => emit(USAGE_EVENT, stamped))
@@ -499,6 +523,11 @@ function revalidateIfStale() {
 }
 
 async function applyToken(token: string | null, allowRefresh = true) {
+  // A token that differs from the one the store holds means the session changed
+  // — possibly signed in as another account from a different Shape window.
+  // Invalidate whatever was in flight for the previous one. The retry after a
+  // rotation already holds the current token, so it is not caught here.
+  if (token && token !== state.accessToken) sessionGeneration += 1;
   const generation = sessionGeneration;
   if (!token) {
     // Ending the session invalidates in-flight account fetches. This also covers
@@ -543,7 +572,7 @@ async function applyToken(token: string | null, allowRefresh = true) {
     // so without this the older response would roll the balance back.
     const usageMovedDuringRequest =
       typeof state.usageUpdatedAt === "number"
-      && state.usageUpdatedAt > requestStartedAt;
+      && state.usageUpdatedAt >= requestStartedAt;
     saveCachedProfile({
       userId: account.id,
       email: account.email,
