@@ -258,11 +258,27 @@ function saveCachedProfile(profile: CachedProfile | null) {
   }
 }
 
+/** True when a patch carries figures a response actually measured. */
+function patchMeasuresUsage(patch: Partial<CachedProfile>): boolean {
+  return (
+    patch.creditsRemaining !== undefined
+    || patch.creditsIncluded !== undefined
+    || patch.freeAutoPercent !== undefined
+    || patch.currentPeriodEnd !== undefined
+  );
+}
+
 /** Fold a partial usage patch into the stored profile without a full rewrite. */
 function patchCachedProfile(patch: Partial<CachedProfile>) {
   const existing = loadCachedProfile();
   if (!existing) return;
-  saveCachedProfile({ ...existing, ...patch, cachedAt: Date.now() });
+  // cachedAt is read back as usageUpdatedAt on startup, so it is a claim about
+  // when the balances were measured. Advancing it on a tier-only patch made an
+  // old balance look fresh for another 30 seconds and suppressed the focus
+  // refresh that would have replaced it.
+  const next: CachedProfile = { ...existing, ...patch };
+  if (patchMeasuresUsage(patch)) next.cachedAt = Date.now();
+  saveCachedProfile(next);
 }
 
 /**
@@ -330,6 +346,10 @@ export function applyUsageCheckResult(
     const at = Date.now();
     setState({ usageUpdatedAt: at });
     patchCachedProfile({ creditsRemaining: snapshot.creditsRemaining });
+    // applyUsageSnapshot returned false because this window already held the
+    // figure, so it emitted nothing. Other windows may still be stale, and the
+    // server did just confirm this number.
+    broadcastUsageChange(snapshot);
   }
 }
 
@@ -583,15 +603,26 @@ async function applyToken(token: string | null, allowRefresh = true) {
     const usageMovedDuringRequest =
       typeof state.usageUpdatedAt === "number"
       && state.usageUpdatedAt >= requestStartedAt;
+    // Write the figures we are about to display. When a usage check confirmed
+    // a newer balance mid-request, setState keeps that one; caching the older
+    // account figures instead meant a restart restored the stale number.
     saveCachedProfile({
       userId: account.id,
       email: account.email,
       name: account.name,
-      tier: account.tier,
-      creditsRemaining: account.creditsRemaining,
-      creditsIncluded: account.creditsIncluded,
-      freeAutoPercent: account.freeAutoPercent,
-      currentPeriodEnd: account.currentPeriodEnd ?? null,
+      tier: usageMovedDuringRequest ? state.tier : account.tier,
+      creditsRemaining: usageMovedDuringRequest
+        ? state.creditsRemaining
+        : account.creditsRemaining,
+      creditsIncluded: usageMovedDuringRequest
+        ? state.creditsIncluded
+        : account.creditsIncluded,
+      freeAutoPercent: usageMovedDuringRequest
+        ? state.freeAutoPercent
+        : account.freeAutoPercent,
+      currentPeriodEnd: usageMovedDuringRequest
+        ? state.currentPeriodEnd
+        : account.currentPeriodEnd ?? null,
       cachedAt: Date.now(),
     });
     setState({

@@ -482,3 +482,60 @@ describe("cloud usage store fast path", () => {
         restore();
     });
 });
+
+describe("cloud usage store cache and peer fixes", () => {
+    beforeEach(async () => {
+        vi.unstubAllGlobals();
+        if (getShapeAuthState().loggedIn) await logoutShape();
+        localStorage.removeItem("shape-auth-profile");
+    });
+
+    const readCache = () =>
+        JSON.parse(localStorage.getItem("shape-auth-profile") ?? "null") as {
+            creditsRemaining: number;
+            cachedAt: number;
+        } | null;
+
+    it("does not claim a tier-only patch measured the balances", async () => {
+        await signIn();
+        const before = readCache();
+        expect(before).not.toBeNull();
+        const stampedAt = before!.cachedAt;
+
+        await new Promise((r) => setTimeout(r, 5));
+
+        // A usage check that only reports tier measures no balance.
+        const changed = applyUsageSnapshot({ tier: "team", source: "usage-check" });
+        expect(changed).toBe(true);
+
+        // cachedAt is read back as usageUpdatedAt on startup, so advancing it
+        // here would make the old balance look fresh for another 30s.
+        expect(readCache()!.cachedAt).toBe(stampedAt);
+    });
+
+    it("still advances cachedAt when a patch carries a measured balance", async () => {
+        await signIn();
+        const stampedAt = readCache()!.cachedAt;
+
+        await new Promise((r) => setTimeout(r, 5));
+        applyUsageSnapshot({ creditsRemaining: 900, source: "usage-check" });
+
+        expect(readCache()!.cachedAt).toBeGreaterThan(stampedAt);
+    });
+
+    it("tells peer windows about a balance this window already held", async () => {
+        await signIn();
+        const balance = getShapeAuthState().creditsRemaining;
+
+        const watcher = watchUsageBroadcasts();
+        // Same figure again: applyUsageSnapshot has nothing to change, so it
+        // returns false. Peers may still be stale.
+        applyUsageCheckResult(
+            { allowed: true, creditsRemaining: balance, tier: "pro" } as never,
+            getShapeAuthState().userId,
+        );
+
+        expect(watcher.seen.length).toBeGreaterThan(0);
+        watcher.restore();
+    });
+});

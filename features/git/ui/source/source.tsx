@@ -678,6 +678,15 @@ export default function Source({
                 return;
             }
             const message = await commands.generateCommitMessage(token, gitRepo);
+            // Credits were spent by the call above, so start the refresh now.
+            // The streaming below is cosmetic and runs at 4ms a character, so
+            // waiting for it left the displayed balance stale for seconds on a
+            // long description.
+            void import("@/lib/cloud/store")
+                .then(({ refreshShapeUsage }) => {
+                    refreshShapeUsage();
+                })
+                .catch(() => undefined);
             const lines = message.trim().split("\n");
             const title = lines[0] ?? "";
             const description = lines.slice(1).join("\n").trim();
@@ -687,11 +696,6 @@ export default function Source({
             if (description) {
                 await streamTextInto(description, setCommitDescription, { msPerChar: 4 });
             }
-            void import("@/lib/cloud/store")
-                .then(({ refreshShapeUsage }) => {
-                    refreshShapeUsage();
-                })
-                .catch(() => undefined);
         } catch (err) {
             notify.error("AI Error", err instanceof Error ? err.message : String(err));
         } finally {
