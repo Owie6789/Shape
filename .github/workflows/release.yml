@@ -49,9 +49,34 @@ jobs:
         run: npm run test:all
 
       - name: Assert tag matches package.json
-        if: startsWith(github.ref, 'refs/tags/')
         run: |
-          TAG="${GITHUB_REF_NAME#v}"
+          set -euo pipefail
+          # Determine expected tag: GITHUB_REF_NAME for tag push, INPUT_TAG for manual dispatch
+          if [[ "${GITHUB_REF:-}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF_NAME#v}"
+            echo "Tag push: $TAG from $GITHUB_REF_NAME"
+          elif [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
+            TAG="${TAG#v}"
+            echo "Manual dispatch with tag input: $TAG"
+            # Verify the input tag exists as a git tag
+            if ! git rev-parse --verify "refs/tags/${{ inputs.tag }}" >/dev/null 2>&1; then
+              echo "::error::Input tag ${{ inputs.tag }} does not exist as a git tag - refusing to build from branch"
+              exit 1
+            fi
+            # Verify HEAD is actually the tagged commit (or the tag points to HEAD)
+            TAG_COMMIT=$(git rev-list -n 1 "refs/tags/${{ inputs.tag }}" 2>/dev/null || true)
+            HEAD_COMMIT=$(git rev-parse HEAD)
+            if [ "$TAG_COMMIT" != "$HEAD_COMMIT" ]; then
+              echo "::error::Manual dispatch tag ${{ inputs.tag }} points to $TAG_COMMIT but HEAD is $HEAD_COMMIT"
+              echo "To release a tag, dispatch the workflow from that tag, not from a branch"
+              echo "Or ensure you are on the tagged commit"
+              exit 1
+            fi
+          else
+            echo "No tag context (neither tag push nor manual dispatch with tag) - skipping version check"
+            exit 0
+          fi
           PKG=$(node -p "require('./package.json').version")
           echo "Tag version: $TAG"
           echo "Package version: $PKG"
@@ -145,7 +170,7 @@ jobs:
 
       - name: List assets
         shell: bash
-        run: ls -lh dist/release/
+        run: find dist/release -type f -exec ls -lh {} \;
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -205,7 +230,7 @@ jobs:
           merge-multiple: true
 
       - name: List downloaded assets
-        run: ls -lhR dist/release
+        run: find dist/release -type f -exec ls -lh {} \;
 
       - name: Resolve release tag
         id: release-tag
@@ -217,6 +242,19 @@ jobs:
           if [ -n "${INPUT_TAG:-}" ]; then
             TAG="$INPUT_TAG"
             echo "Using input tag: $TAG"
+            # Critical: verify input tag exists as git tag to prevent typo creating new release from branch
+            if ! git rev-parse --verify "refs/tags/$TAG" >/dev/null 2>&1; then
+              echo "::error::Input tag $TAG does not exist as git tag - refusing to create release from branch"
+              echo "Create the tag first with 'git tag $TAG && git push origin $TAG' or dispatch from the tag"
+              exit 1
+            fi
+            # Verify tag points to HEAD or current commit is the tagged commit
+            TAG_COMMIT=$(git rev-list -n 1 "refs/tags/$TAG" 2>/dev/null || true)
+            HEAD_COMMIT=$(git rev-parse HEAD)
+            if [ "$TAG_COMMIT" != "$HEAD_COMMIT" ]; then
+              echo "::warning::Input tag $TAG points to $TAG_COMMIT but HEAD is $HEAD_COMMIT"
+              echo "This could be a branch dispatch - verifying tag exists but allowing (build job already verified)"
+            fi
           else
             TAG="${GITHUB_REF_NAME}"
             echo "Using ref name: $TAG"

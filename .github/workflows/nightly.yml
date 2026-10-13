@@ -48,6 +48,7 @@ jobs:
 
       - name: Generate nightly version (for build)
         id: nightly-version
+        shell: bash
         run: |
           BASE=$(node -p "require('./package.json').version")
           NIGHTLY="${BASE}-nightly.$(date +%Y%m%d).${GITHUB_RUN_NUMBER}"
@@ -154,7 +155,7 @@ jobs:
 
       - name: List artifacts
         run: |
-          ls -lhR dist/nightly || echo "No artifacts"
+          find dist/nightly -type f -exec ls -lh {} \; 2>/dev/null || echo "No artifacts"
           if [ -f "dist/nightly/README.txt" ]; then
             echo "Placeholder build detected - skipping publish"
           fi
@@ -169,7 +170,7 @@ jobs:
             echo "Placeholder build - no real artifacts, skipping publish"
             exit 0
           fi
-          if [ -z "$(ls -A dist/nightly 2>/dev/null)" ]; then
+          if [ -z "$(find dist/nightly -mindepth 1 -print -quit 2>/dev/null)" ]; then
             echo "No artifacts to publish - skipping"
             exit 0
           fi

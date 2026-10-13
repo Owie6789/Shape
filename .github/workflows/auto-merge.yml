@@ -64,18 +64,25 @@ jobs:
 
       - name: Verify CI success (fail closed)
         if: steps.meta.outputs.automerge == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           if [ "${{ steps.wait-ci.outputs.conclusion }}" != "success" ]; then
             echo "::error::CI did not succeed (conclusion: ${{ steps.wait-ci.outputs.conclusion }}), not auto-merging"
             exit 1
           fi
-          # Verify PR head hasn't changed during wait (prevent TOCTOU)
-          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
-          echo "CI succeeded for merge commit ${{ github.sha }}, head is $HEAD_SHA"
-          # Ensure we still have a successful check for current head via API
-          if ! gh api repos/${{ github.repository }}/commits/$HEAD_SHA/check-runs --jq '.check_runs[] | select(.name=="CI Success") | .conclusion' | grep -q "success"; then
-            echo "::warning::CI Success not yet reported on head SHA, but merge commit passed - proceeding with auto-merge which will respect branch protection"
+          # Re-fetch current head SHA to prevent TOCTOU race - if Dependabot pushed during wait, original HEAD_SHA is stale
+          CURRENT_HEAD=$(gh pr view "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --json headRefOid --jq '.headRefOid')
+          ORIGINAL_HEAD="${{ github.event.pull_request.head.sha }}"
+          echo "Original head: $ORIGINAL_HEAD"
+          echo "Current head: $CURRENT_HEAD"
+          echo "Merge commit: ${{ github.sha }}"
+          if [ "$CURRENT_HEAD" != "$ORIGINAL_HEAD" ]; then
+            echo "::error::PR head changed during CI wait (from $ORIGINAL_HEAD to $CURRENT_HEAD) - aborting auto-merge, will retry on next push"
+            exit 1
           fi
+          echo "✓ CI succeeded and head unchanged ($CURRENT_HEAD)"
 
       - name: Enable auto-merge
         if: steps.meta.outputs.automerge == 'true' && steps.wait-ci.outputs.conclusion == 'success'

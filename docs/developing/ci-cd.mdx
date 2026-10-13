@@ -60,7 +60,7 @@ Jobs:
 - **Dependency Review**: On PRs only, fails on `high` severity, denies GPL-2.0/3.0.
 - **Audit**: `npm audit --audit-level=critical` + `cargo audit` with JSON reports uploaded.
 - **Zizmor**: GitHub Actions workflow linter (supply chain, template injection, unpinned actions).
-- **Scorecard**: OpenSSF Scorecard (only on `main` pushes, not PRs), publishes SARIF.
+- **Scorecard**: OpenSSF Scorecard (on `main` pushes, scheduled weekly, and manual dispatch - not on PRs), publishes SARIF.
 
 Permissions hardened per job: CodeQL gets `security-events: write`, Scorecard gets `id-token: write`.
 

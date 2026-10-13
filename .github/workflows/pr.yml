@@ -67,14 +67,23 @@ jobs:
         run: |
           set -euo pipefail
           # Heuristic: look for actual secret values, not variable names or secret references
-          # Exclude: ${{ secrets.* }}, env var references, example values, .gitignore
-          # Only flag real private key blocks, API keys with actual values, etc.
+          # We must NOT filter out all lines containing TAURI_SIGNING/SHAPE_CLOUD, as that would allow
+          # a real secret on such a line to evade detection (critical security issue)
+          # Instead, only filter the specific GitHub Actions secret reference syntax
+          # NOTE: Avoid literal "BEGIN PRIVATE KEY" string to prevent this file itself being flagged as secret
           DIFF=$(git diff origin/main...HEAD --unified=0 || git diff HEAD~1 --unified=0 || true)
-          # Filter out workflow secret references to avoid false positives on TAURI_SIGNING_PRIVATE_KEY etc
-          FILTERED=$(echo "$DIFF" | grep -v "secrets\." | grep -v "TAURI_SIGNING" | grep -v "SHAPE_CLOUD" || true)
-          if echo "$FILTERED" | grep -Ei "(BEGIN PRIVATE KEY|BEGIN RSA PRIVATE KEY|sk-ant-[a-zA-Z0-9-]{20,}|sk-proj-[a-zA-Z0-9-]{20,}|ghp_[a-zA-Z0-9]{36}|gho_[a-zA-Z0-9]{36}|AKIA[0-9A-Z]{16}|aws_secret_access_key)" | grep -v "example" | grep -v ".gitignore"; then
+          # Only filter out the exact ${{ secrets.* }} reference pattern, not the whole line content
+          FILTERED=$(echo "$DIFF" | sed -E 's/\$\{\{\s*secrets\.[^}]+\}\}//g' || true)
+          # Use obfuscated pattern for private key to avoid self-detection: split the string
+          PRIVATE_KEY_PATTERN="BEGIN.*PRIVATE"
+          if echo "$FILTERED" | grep -Ei "($PRIVATE_KEY_PATTERN|sk-ant-[a-zA-Z0-9-]{20,}|sk-proj-[a-zA-Z0-9-]{20,}|ghp_[a-zA-Z0-9]{36}|gho_[a-zA-Z0-9]{36}|AKIA[0-9A-Z]{16})" | grep -v "example" | grep -v ".gitignore" | grep -v "PRIVATE_KEY_PATTERN"; then
             echo "::error::Potential secret value detected in diff - please review"
             echo "If this is a false positive (e.g. docs), add 'example' comment or adjust filter"
+            exit 1
+          fi
+          # Also check for aws_secret_access_key pattern separately (needs context)
+          if echo "$FILTERED" | grep -Ei "aws_secret_access_key.*[A-Za-z0-9/+=]{40}" | grep -v "example" | grep -v ".gitignore"; then
+            echo "::error::Potential AWS secret detected"
             exit 1
           fi
           echo "✓ No obvious secret values in diff"
